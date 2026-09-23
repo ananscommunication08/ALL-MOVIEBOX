@@ -39,7 +39,7 @@ object MovieBoxApiClient {
     private const val PLAY_URL_FALLBACK = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/play"
 
     private const val AUTH_TOKEN =
-        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOjI4NDQzODk4NzkxOTMxNTk2NDAsImF0cCI6MywiZXh0IjoiMTc4ODQwNzY5OSIsImV4cCI6MTc5NjE4MzY5OSwiaWF0IjoxNzg4NDA3Mzk5fQ.G3cuG8zV0y5Eug4TZKPgyULcsQTQqrmLWmJ_x0k_2TE"
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOjEzNzc5NDUxNDIxODgwNDAwNDgsImF0cCI6MywiZXh0IjoiMTc4OTkwNTk2NyIsImV4cCI6MTc5NzY4MTk2NywiaWF0IjoxNzg5OTA1NjY3fQ.nu-oeO3EcNKS1WUqxDeH2MKM7-v9-l1EPTvSmlQNiio"
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
     private const val ORIGIN = "https://movieboxph.org"

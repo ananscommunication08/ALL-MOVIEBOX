@@ -24,7 +24,15 @@ class MovieBoxRepository(private val context: Context) {
         try {
             val liveData = MovieBoxApiClient.fetchHomeFeed(context)
             if (liveData.sections.isNotEmpty() || liveData.heroBanners.isNotEmpty()) {
-                emit(liveData)
+                val existingTitles = liveData.sections.map { it.title.trim().lowercase() }.toSet()
+                val additionalSections = initialData.sections.filter { initialSec ->
+                    initialSec.items.isNotEmpty() && !existingTitles.contains(initialSec.title.trim().lowercase())
+                }
+                val mergedFeed = liveData.copy(
+                    sections = liveData.sections + additionalSections,
+                    heroBanners = if (liveData.heroBanners.isNotEmpty()) liveData.heroBanners else initialData.heroBanners
+                )
+                emit(mergedFeed)
             }
         } catch (_: Exception) {
             // If offline, initialData already emitted
@@ -32,7 +40,19 @@ class MovieBoxRepository(private val context: Context) {
     }
 
     suspend fun refreshHomeFeed(): HomeFeedData {
-        return MovieBoxApiClient.fetchHomeFeed(context)
+        val initialData = MovieBoxApiClient.loadBundledHomeFeed(context)
+        val liveData = MovieBoxApiClient.fetchHomeFeed(context)
+        if (liveData.sections.isNotEmpty() || liveData.heroBanners.isNotEmpty()) {
+            val existingTitles = liveData.sections.map { it.title.trim().lowercase() }.toSet()
+            val additionalSections = initialData.sections.filter { initialSec ->
+                initialSec.items.isNotEmpty() && !existingTitles.contains(initialSec.title.trim().lowercase())
+            }
+            return liveData.copy(
+                sections = liveData.sections + additionalSections,
+                heroBanners = if (liveData.heroBanners.isNotEmpty()) liveData.heroBanners else initialData.heroBanners
+            )
+        }
+        return initialData
     }
 
     /**
@@ -137,8 +157,8 @@ class MovieBoxRepository(private val context: Context) {
         return com.example.data.api.StoryTvApiClient.fetchEpisodeMetadata(showId, cursor)
     }
 
-    suspend fun fetchStoryTvEpisodeStream(showId: String, episodeIndex: Int): String? {
-        return com.example.data.api.StoryTvApiClient.fetchEpisodeStream(showId, episodeIndex)
+    suspend fun fetchStoryTvEpisodeStream(showId: String, episodeIndex: Int, forceRefresh: Boolean = false): String? {
+        return com.example.data.api.StoryTvApiClient.fetchEpisodeStream(showId, episodeIndex, forceRefresh)
     }
 
     suspend fun fetchStoryTvStreamQualities(masterUrl: String): List<com.example.data.model.MovieStream> {
@@ -147,6 +167,28 @@ class MovieBoxRepository(private val context: Context) {
 
     suspend fun searchStoryTv(query: String): List<MovieItem> {
         return com.example.data.api.StoryTvApiClient.searchShows(query)
+    }
+
+    /**
+     * Server 5: FreeReels methods
+     */
+    suspend fun fetchFreeReelsHome(tabKey: String = "503"): Pair<List<MovieItem>, String?> {
+        return com.example.data.api.FreeReelsApiClient.fetchHomeTab(tabKey)
+    }
+
+    suspend fun fetchFreeReelsFeed(
+        nextCursor: String,
+        moduleKey: String = "1036"
+    ): Pair<List<MovieItem>, Pair<String?, Boolean>> {
+        return com.example.data.api.FreeReelsApiClient.fetchFeed(nextCursor, moduleKey)
+    }
+
+    suspend fun fetchFreeReelsEpisodes(seriesId: String): List<com.example.data.model.FreeReelsEpisodeItem> {
+        return com.example.data.api.FreeReelsApiClient.fetchEpisodes(seriesId)
+    }
+
+    suspend fun searchFreeReels(query: String): List<MovieItem> {
+        return com.example.data.api.FreeReelsApiClient.searchDramas(query)
     }
 }
 

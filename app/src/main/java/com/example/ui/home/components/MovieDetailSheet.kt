@@ -298,27 +298,30 @@ fun MovieDetailSheet(
                         )
                     }
 
-                    FilledTonalButton(
-                        onClick = { /* simulated download action */ },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = DarkSurfaceVariant,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Download",
-                            fontSize = 13.sp
-                        )
+                    val isStoryTv = movie.isStoryTvServer || movie.source.equals("storytv", ignoreCase = true)
+                    if (!isStoryTv) {
+                        FilledTonalButton(
+                            onClick = { /* simulated download action */ },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = DarkSurfaceVariant,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Download",
+                                fontSize = 13.sp
+                            )
+                        }
                     }
                 }
 

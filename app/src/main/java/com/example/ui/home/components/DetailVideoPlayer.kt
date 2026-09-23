@@ -70,7 +70,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
+import com.example.util.DeviceUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +88,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import android.view.KeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -106,10 +115,13 @@ import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import android.widget.Toast
 import com.example.data.api.MovieBoxApiClient
+
 import com.example.data.download.MovieDownloadManager
 import com.example.data.model.DubLanguage
 import com.example.data.model.MovieItem
@@ -121,6 +133,23 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+
+@Composable
+fun Modifier.tvControlFocusable(shape: androidx.compose.ui.graphics.Shape = CircleShape): Modifier = composed {
+    var isFocused by remember { mutableStateOf(false) }
+    this
+        .onFocusChanged { isFocused = it.isFocused }
+        .focusable()
+        .then(
+            if (isFocused) {
+                Modifier
+                    .border(2.5.dp, Color.White, shape)
+                    .background(Color.White.copy(alpha = 0.25f), shape)
+            } else {
+                Modifier
+            }
+        )
+}
 
 private const val FALLBACK_STREAM =
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
@@ -227,7 +256,9 @@ private fun createMediaSource(
             HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         }
         else -> {
-            ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            val extractorsFactory = DefaultExtractorsFactory()
+                .setMp4ExtractorFlags(Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS)
+            ProgressiveMediaSource.Factory(dataSourceFactory, extractorsFactory).createMediaSource(mediaItem)
         }
     }
 }
@@ -429,6 +460,7 @@ fun NormalPlayerSeekBar(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
+    var isFocused by remember { mutableStateOf(false) }
 
     val actualProgress = if (durationMs > 0) {
         (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -440,6 +472,26 @@ fun NormalPlayerSeekBar(
         modifier = modifier
             .fillMaxWidth()
             .height(28.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            val target = (currentPositionMs - 10000L).coerceAtLeast(0L)
+                            onSeekTo(target)
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            val maxDur = if (durationMs > 0) durationMs else Long.MAX_VALUE
+                            val target = (currentPositionMs + 10000L).coerceAtMost(maxDur)
+                            onSeekTo(target)
+                            true
+                        }
+                        else -> false
+                    }
+                } else false
+            }
             .pointerInput(durationMs) {
                 detectTapGestures { offset ->
                     if (size.width > 0 && durationMs > 0) {
@@ -482,8 +534,8 @@ fun NormalPlayerSeekBar(
             },
         contentAlignment = Alignment.CenterStart
     ) {
-        val thumbRadius = if (isDragging) 6.5.dp else 5.dp
-        val trackHeight = 2.5.dp
+        val thumbRadius = if (isDragging || isFocused) 7.dp else 5.dp
+        val trackHeight = if (isFocused) 3.5.dp else 2.5.dp
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val centerY = size.height / 2f
@@ -558,6 +610,13 @@ fun DetailVideoPlayer(
     val context = LocalContext.current
     val activity = remember { context.findActivity() }
     val scope = rememberCoroutineScope()
+
+    val playerFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        try {
+            playerFocusRequester.requestFocus()
+        } catch (_: Exception) {}
+    }
 
     var resolvedStreams by remember { mutableStateOf<List<MovieStream>>(emptyList()) }
     var activeStreamUrl by remember { mutableStateOf("") }
@@ -635,15 +694,18 @@ fun DetailVideoPlayer(
         }
     }
 
-    // Fullscreen state
-    var isFullscreenActive by remember { mutableStateOf(isFullscreen) }
+    val isTv = remember { DeviceUtils.isAndroidTv(context) }
+
+    // Fullscreen state - on TV directly opens in fullscreen
+    var isFullscreenActive by remember { mutableStateOf(if (isTv) true else isFullscreen) }
 
     // Playback state
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
-    var controlsVisible by remember { mutableStateOf(true) }
+    var controlsVisible by remember { mutableStateOf(!isTv) }
+    val playControlFocusRequester = remember { FocusRequester() }
 
     // Lock screen state
     var isLocked by remember { mutableStateOf(false) }
@@ -925,18 +987,32 @@ fun DetailVideoPlayer(
         }
     }
 
-    // Auto-hide controls after 4 seconds (keep visible while buffering so spinner around play button is visible)
+    // Auto-hide controls after 4.5 seconds (keep visible while buffering on mobile so spinner around play button is visible)
     LaunchedEffect(controlsVisible, isPlaying, isLocked, isBuffering, isFetchingStream) {
         if (controlsVisible && isPlaying && !isLocked && !showSettingsDialog && !isBuffering && !isFetchingStream) {
-            delay(4000)
+            delay(4500)
             controlsVisible = false
         }
     }
 
-    // Keep controls visible when buffering starts so user sees the progress indicator around play button
+    // Keep controls visible when buffering starts on mobile so user sees the progress indicator around play button
     LaunchedEffect(isBuffering, isFetchingStream) {
-        if ((isBuffering || isFetchingStream) && !isLocked) {
+        if (!isTv && (isBuffering || isFetchingStream) && !isLocked) {
             controlsVisible = true
+        }
+    }
+
+    // Request focus on play button when controls become visible on TV
+    LaunchedEffect(controlsVisible) {
+        if (controlsVisible && isTv) {
+            delay(60)
+            try {
+                playControlFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        } else if (!controlsVisible) {
+            try {
+                playerFocusRequester.requestFocus()
+            } catch (_: Exception) {}
         }
     }
 
@@ -974,10 +1050,14 @@ fun DetailVideoPlayer(
 
     fun exitFullscreen() {
         activity?.runOnUiThread {
-            isFullscreenActive = false
-            onFullscreenChanged(false)
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            showSystemUI(activity)
+            if (isTv) {
+                onBackClick?.invoke()
+            } else {
+                isFullscreenActive = false
+                onFullscreenChanged(false)
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                showSystemUI(activity)
+            }
         }
     }
 
@@ -985,20 +1065,22 @@ fun DetailVideoPlayer(
         activity?.runOnUiThread {
             isFullscreenActive = true
             onFullscreenChanged(true)
-            val currentVideoSize = exoPlayer.videoSize
-            val rot = currentVideoSize.unappliedRotationDegrees
-            val effW = if (rot == 90 || rot == 270) currentVideoSize.height else currentVideoSize.width
-            val effH = if (rot == 90 || rot == 270) currentVideoSize.width else currentVideoSize.height
-            val isPortrait = if (effW > 0 && effH > 0) {
-                effH > effW
-            } else {
-                isVideoPortrait || isFromShortsPage || movie.isShort || movie.genre.contains("Short", ignoreCase = true)
-            }
+            if (!isTv) {
+                val currentVideoSize = exoPlayer.videoSize
+                val rot = currentVideoSize.unappliedRotationDegrees
+                val effW = if (rot == 90 || rot == 270) currentVideoSize.height else currentVideoSize.width
+                val effH = if (rot == 90 || rot == 270) currentVideoSize.width else currentVideoSize.height
+                val isPortrait = if (effW > 0 && effH > 0) {
+                    effH > effW
+                } else {
+                    isVideoPortrait || isFromShortsPage || movie.isShort || movie.genre.contains("Short", ignoreCase = true)
+                }
 
-            if (isPortrait) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                if (isPortrait) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } else {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
             }
             hideSystemUI(activity)
         }
@@ -1016,9 +1098,9 @@ fun DetailVideoPlayer(
         }
     }
 
-    // Keep fullscreen orientation aligned if video aspect ratio is determined after playback starts
+    // Keep fullscreen orientation aligned if video aspect ratio is determined after playback starts (Mobile only)
     LaunchedEffect(isVideoPortrait, isFullscreenActive) {
-        if (isFullscreenActive && activity != null) {
+        if (!isTv && isFullscreenActive && activity != null) {
             val targetOrientation = if (isVideoPortrait) {
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             } else {
@@ -1030,12 +1112,19 @@ fun DetailVideoPlayer(
         }
     }
 
-    // Back button handling
-    BackHandler(enabled = isFullscreenActive || isLocked) {
+    // Back button handling in player:
+    // Only intercept if screen is locked (to unlock), in fullscreen (to exit fullscreen), or on TV
+    BackHandler(enabled = isLocked || isFullscreenActive || isTv) {
         if (isLocked) {
             isLocked = false
+        } else if (isTv && controlsVisible) {
+            controlsVisible = false
+        } else if (isTv) {
+            onBackClick?.invoke()
         } else if (isFullscreenActive) {
             exitFullscreen()
+        } else {
+            onBackClick?.invoke()
         }
     }
 
@@ -1540,6 +1629,94 @@ fun DetailVideoPlayer(
                 )
             }
             .testTag("detail_exoplayer_container")
+            .focusRequester(playerFocusRequester)
+            .focusable()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    if (isTv) {
+                        if (!controlsVisible) {
+                            // CONTROLS ARE HIDDEN (Normal TV playback):
+                            // Left/Right: Fast rewind / Fast forward 10s directly without showing controls
+                            // OK / DPAD_CENTER / ENTER: Makes controls visible for navigation
+                            // UP / DOWN: Also reveals controls
+                            // BACK: Exits player
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                KeyEvent.KEYCODE_DPAD_CENTER,
+                                KeyEvent.KEYCODE_ENTER,
+                                KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                KeyEvent.KEYCODE_DPAD_UP,
+                                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    controlsVisible = true
+                                    true
+                                }
+                                KeyEvent.KEYCODE_DPAD_LEFT,
+                                KeyEvent.KEYCODE_MEDIA_REWIND,
+                                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                                    val newPos = (exoPlayer.currentPosition - 10000L).coerceAtLeast(0L)
+                                    exoPlayer.seekTo(newPos)
+                                    currentPositionMs = newPos
+                                    true
+                                }
+                                KeyEvent.KEYCODE_DPAD_RIGHT,
+                                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                                KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                                    val maxDur = if (durationMs > 0) durationMs else exoPlayer.duration
+                                    val newPos = (exoPlayer.currentPosition + 10000L).coerceAtMost(if (maxDur > 0) maxDur else Long.MAX_VALUE)
+                                    exoPlayer.seekTo(newPos)
+                                    currentPositionMs = newPos
+                                    true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                KeyEvent.KEYCODE_MEDIA_PLAY,
+                                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                    if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    true
+                                }
+                                KeyEvent.KEYCODE_BACK -> {
+                                    onBackClick?.invoke()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else {
+                            // CONTROLS ARE VISIBLE ON TV:
+                            // Return false for D-pad navigation so focus subsystem moves between control buttons and OK activates them
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                KeyEvent.KEYCODE_BACK -> {
+                                    controlsVisible = false
+                                    true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                                    if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                    } else {
+                        // MOBILE DEVICE KEY EVENTS (Keyboard, hardware buttons, emulator):
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            KeyEvent.KEYCODE_BACK -> {
+                                if (isLocked) {
+                                    isLocked = false
+                                    true
+                                } else if (isFullscreenActive) {
+                                    exitFullscreen()
+                                    true
+                                } else {
+                                    onBackClick?.invoke()
+                                    true
+                                }
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                                if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                } else false
+            }
     ) {
         // Native ExoPlayer View with dynamic resizeMode
         AndroidView(
@@ -1678,12 +1855,16 @@ fun DetailVideoPlayer(
                             modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Back button only visible in fullscreen mode (exits fullscreen or exits player on TV)
                             if (isFullscreenActive) {
                                 IconButton(
                                     onClick = {
-                                        exitFullscreen()
+                                        if (isTv) onBackClick?.invoke() else exitFullscreen()
                                     },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .tvControlFocusable()
+                                        .testTag("player_back_button")
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -1714,22 +1895,26 @@ fun DetailVideoPlayer(
                             }
                         }
 
-                        // Right icons: Download + Play Next (Series full screen only) + Volume + Lock
+                        // Right icons: Download (hidden for Story TV) + Play Next (Series full screen only) + Volume + Lock
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = {
-                                    showDownloadDialog = true
-                                },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .testTag("player_download_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = "Download Video",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
+                            val isStoryTv = movie.isStoryTvServer || movie.source.equals("storytv", ignoreCase = true)
+                            if (!isStoryTv) {
+                                IconButton(
+                                    onClick = {
+                                        showDownloadDialog = true
+                                    },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .tvControlFocusable()
+                                        .testTag("player_download_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Download Video",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
                             if (isSeries && isFullscreenActive) {
                                 Spacer(Modifier.width(4.dp))
@@ -1738,6 +1923,7 @@ fun DetailVideoPlayer(
                                     enabled = !isLastEpisodeOfLastSeason,
                                     modifier = Modifier
                                         .size(36.dp)
+                                        .tvControlFocusable()
                                         .testTag("player_top_play_next_button")
                                 ) {
                                     Icon(
@@ -1754,7 +1940,9 @@ fun DetailVideoPlayer(
                                     isMuted = !isMuted
                                     exoPlayer.volume = if (isMuted) 0f else 1f
                                 },
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
@@ -1768,7 +1956,9 @@ fun DetailVideoPlayer(
                                 onClick = {
                                     isLocked = true
                                 },
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.LockOpen,
@@ -1804,7 +1994,9 @@ fun DetailVideoPlayer(
                                         else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                                     }
                                 },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AspectRatio,
@@ -1825,7 +2017,9 @@ fun DetailVideoPlayer(
                                         } catch (_: Exception) {}
                                     }
                                 },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.PictureInPictureAlt,
@@ -1841,7 +2035,9 @@ fun DetailVideoPlayer(
                                     val newPos = (exoPlayer.currentPosition - 10000L).coerceAtLeast(0L)
                                     exoPlayer.seekTo(newPos)
                                 },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.FastRewind,
@@ -1868,6 +2064,8 @@ fun DetailVideoPlayer(
                                     color = Color.White,
                                     modifier = Modifier
                                         .size(50.dp)
+                                        .focusRequester(playControlFocusRequester)
+                                        .tvControlFocusable(CircleShape)
                                         .clickable {
                                             if (exoPlayer.isPlaying) {
                                                 exoPlayer.pause()
@@ -1893,7 +2091,9 @@ fun DetailVideoPlayer(
                                     val newPos = (exoPlayer.currentPosition + 10000L).coerceAtMost(exoPlayer.duration)
                                     exoPlayer.seekTo(newPos)
                                 },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.FastForward,
@@ -1911,7 +2111,9 @@ fun DetailVideoPlayer(
                                     settingsActiveTab = "VIDEO"
                                     showSettingsDialog = true
                                 },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvControlFocusable()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Settings,
@@ -1921,23 +2123,27 @@ fun DetailVideoPlayer(
                                 )
                             }
 
-                            // 7. Fullscreen Toggle Button
-                            IconButton(
-                                onClick = {
-                                    if (isFullscreenActive) {
-                                        exitFullscreen()
-                                    } else {
-                                        enterFullscreen()
-                                    }
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isFullscreenActive) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                    contentDescription = if (isFullscreenActive) "Exit Fullscreen" else "Enter Fullscreen",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(26.dp)
-                                )
+                            // 7. Fullscreen Toggle Button (Not needed on TV since TV is always full screen)
+                            if (!isTv) {
+                                IconButton(
+                                    onClick = {
+                                        if (isFullscreenActive) {
+                                            exitFullscreen()
+                                        } else {
+                                            enterFullscreen()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .tvControlFocusable()
+                                ) {
+                                    Icon(
+                                        imageVector = if (isFullscreenActive) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                        contentDescription = if (isFullscreenActive) "Exit Fullscreen" else "Enter Fullscreen",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
                             }
                         }
 

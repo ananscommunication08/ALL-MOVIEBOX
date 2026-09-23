@@ -83,6 +83,7 @@ fun DownloadQualityDialog(
     seasonEpisodesMap: Map<Int, List<Int>> = emptyMap(),
     currentSeason: Int = 1,
     currentEpisode: Int = 1,
+    isShortsPlayer: Boolean = false,
     onBatchDownloadConfirmed: ((quality: String, downloadUrl: String, selectedEpisodes: List<Pair<Int, Int>>) -> Unit)? = null
 ) {
     if (!show) return
@@ -456,7 +457,7 @@ fun DownloadQualityDialog(
 
                     Spacer(modifier = Modifier.height(if (isLandscape) 4.dp else 8.dp))
 
-                    // 3. Sub-header Toolbar: Selection summary and Select All button
+                    // 3. Sub-header Toolbar: Selection summary and Select All / All-in-One button
                     val allCurrentSeasonSelected = currentSeasonEpisodes.isNotEmpty() && currentSeasonEpisodes.all { ep ->
                         selectedEpisodes.contains(currentTabSeason to ep)
                     }
@@ -503,7 +504,7 @@ fun DownloadQualityDialog(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (allCurrentSeasonSelected) "Deselect S${currentTabSeason.toString().padStart(2, '0')}" else "Select All S${currentTabSeason.toString().padStart(2, '0')}",
+                                    text = if (allCurrentSeasonSelected) "Deselect All" else "Select All",
                                     color = if (allCurrentSeasonSelected) MovieBoxRed else Color(0xFFCBD5E1),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold
@@ -609,10 +610,9 @@ fun DownloadQualityDialog(
                         },
                         modifier = Modifier.testTag("download_dialog_ok")
                     ) {
-                        val okText = if (isGridMode && selectedEpisodes.size > 1) {
-                            "OK (${selectedEpisodes.size})"
-                        } else {
-                            "OK"
+                        val okText = when {
+                            isGridMode && selectedEpisodes.size > 1 -> "OK (${selectedEpisodes.size})"
+                            else -> "OK"
                         }
                         Text(
                             text = okText,

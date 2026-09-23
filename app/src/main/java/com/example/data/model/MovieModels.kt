@@ -10,7 +10,29 @@ enum class AppServer(
     SERVER_1("server_1", "MovieBox", "MovieBox", "MovieBox Movies & TV Series", ""),
     SERVER_2("server_2", "VSKit", "VSKit", "VSKit Short Dramas", "https://vskit.online/logo.svg"),
     SERVER_3("server_3", "Lookr", "Lookr", "Lookr Movies & Series", "https://videodownloader.site/assets/brand/omnisave-icon-hd.png?x-oss-process=image/resize%2Cw_600"),
-    SERVER_4("server_4", "Story TV", "Story TV", "Story TV Short Dramas", "https://cdn.storytv.asia/wa/prod/splash_logo.svg")
+    SERVER_4("server_4", "Story TV", "Story TV", "Story TV Short Dramas", "https://cdn.storytv.asia/wa/prod/splash_logo.svg"),
+    SERVER_5("server_5", "FreeReels", "FreeReels", "FreeReels Short Dramas", "https://play-lh.googleusercontent.com/4UD1HiZkmoTR3nzr5Z8qPvKzi7K1JptSmHPZtJ7MN7hi5WE8fNxHumvhRFHZS0r1SQ")
+}
+
+data class FreeReelsEpisodeItem(
+    val id: String,
+    val name: String,
+    val index: Int,
+    val duration: Int = 0,
+    val videoUrl: String = "",
+    val externalAudioH264M3u8: String = "",
+    val m3u8Url: String = "",
+    val externalAudioH265M3u8: String = "",
+    val unlock: Boolean = true
+) {
+    val playableUrl: String
+        get() = videoUrl.ifBlank {
+            externalAudioH264M3u8.ifBlank {
+                m3u8Url.ifBlank {
+                    externalAudioH265M3u8
+                }
+            }
+        }
 }
 
 data class VskitEpisodeItem(
@@ -51,6 +73,7 @@ data class MovieItem(
     val isSeries: Boolean = false,
     val isVskitServer: Boolean = false,
     val isStoryTvServer: Boolean = false,
+    val isFreeReelsServer: Boolean = false,
     val subjectType: Int = 1
 ) {
     val subjectTypeInfo: SubjectTypeInfo
@@ -66,6 +89,7 @@ data class MovieItem(
 
     val isShortsContent: Boolean
         get() = isStoryTvServer ||
+                isFreeReelsServer ||
                 isVskitServer ||
                 subjectType == 7 ||
                 (source.equals("ugc-anime.com", ignoreCase = true) && uploadBy.equals("MiniTV", ignoreCase = true)) ||

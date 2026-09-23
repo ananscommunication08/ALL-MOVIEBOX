@@ -10,6 +10,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.example.data.api.MovieBoxApiClient
+import com.example.data.api.StoryTvApiClient
 import com.example.data.api.VskitShortsApiClient
 import com.example.data.model.MovieItem
 import kotlinx.coroutines.CancellationException
@@ -161,6 +162,78 @@ class MovieDownloadManager private constructor(private val context: Context) {
     }
 
     /**
+     * Start or queue an "All-in-One" download for shorts, merging all episodes serial-wise
+     * into a single continuous video file.
+     */
+    fun startMergeDownload(
+        movie: MovieItem,
+        quality: String,
+        dubLabel: String = "Original",
+        episodes: List<Pair<Int, Int>>,
+        firstStreamUrl: String = ""
+    ) {
+        val safeMovieId = movie.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "shorts_${System.currentTimeMillis()}" }
+        val safeQuality = quality.filter { it.isLetterOrDigit() }.ifBlank { "720p" }
+        val sortedEps = episodes.sortedWith(compareBy({ it.first }, { it.second })).ifEmpty {
+            listOf(1 to 1)
+        }
+        val totalEpisodes = sortedEps.size
+        val epRangeLabel = if (totalEpisodes > 1) {
+            "Ep ${sortedEps.first().second}-${sortedEps.last().second}"
+        } else {
+            "Ep ${sortedEps.first().second}"
+        }
+        val downloadId = "${safeMovieId}_all_in_one_${safeQuality}"
+
+        pausedItemIds.remove(downloadId)
+
+        scope.launch {
+            val existing = dao.getDownloadById(downloadId)
+            if (existing != null && existing.status == DownloadStatus.COMPLETED) {
+                val targetFile = File(existing.localFilePath)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    return@launch
+                }
+            }
+
+            val moviesDir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                ?: File(context.filesDir, "movies")
+            if (!moviesDir.exists()) {
+                moviesDir.mkdirs()
+            }
+
+            val safeFileName = "${safeMovieId}_All_In_One_${safeQuality}.mp4"
+            val targetFile = File(moviesDir, safeFileName)
+            val tempFile = File(moviesDir, "$safeFileName.download")
+
+            val item = DownloadItem(
+                id = downloadId,
+                movieId = movie.id,
+                title = "${movie.title} [All-in-One $epRangeLabel]",
+                coverUrl = movie.coverUrl,
+                backdropUrl = movie.backdropUrl,
+                quality = quality,
+                downloadUrl = firstStreamUrl.trim(),
+                localFilePath = targetFile.absolutePath,
+                totalBytes = 0L,
+                downloadedBytes = 0L,
+                progress = 0f,
+                speedFormatted = "Preparing All-in-One download...",
+                status = DownloadStatus.DOWNLOADING,
+                errorMessage = null,
+                dubLabel = dubLabel,
+                seasonNumber = sortedEps.first().first,
+                episodeNumber = sortedEps.first().second,
+                isSeries = true,
+                createdAt = System.currentTimeMillis()
+            )
+
+            dao.insertOrUpdate(item)
+            launchMergeDownloadJob(item, sortedEps, tempFile, targetFile, firstStreamUrl)
+        }
+    }
+
+    /**
      * Pause an ongoing download without showing failed or error.
      */
     fun pauseDownload(id: String) {
@@ -219,7 +292,16 @@ class MovieDownloadManager private constructor(private val context: Context) {
                 errorMessage = null
             )
             dao.update(updated)
-            launchDownloadJob(updated, tempFile, targetFile)
+
+            if (item.id.contains("_all_in_one_")) {
+                val epMatch = Regex("Ep (\\d+)-(\\d+)").find(item.title)
+                val startEp = epMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val endEp = epMatch?.groupValues?.get(2)?.toIntOrNull() ?: item.episodeNumber.coerceAtLeast(1)
+                val epList = (startEp..endEp).map { item.seasonNumber to it }
+                launchMergeDownloadJob(updated, epList, tempFile, targetFile, item.downloadUrl)
+            } else {
+                launchDownloadJob(updated, tempFile, targetFile)
+            }
         }
     }
 
@@ -289,47 +371,376 @@ class MovieDownloadManager private constructor(private val context: Context) {
      * Self-healing: resolves a fresh signed stream URL from API for movies, episodes, or shorts.
      */
     private suspend fun resolveFreshStreamUrl(item: DownloadItem): String? {
+        val resolved = resolveEpisodeStreamUrl(
+            movieId = item.movieId,
+            title = item.title,
+            seasonNumber = item.seasonNumber,
+            episodeNumber = item.episodeNumber,
+            quality = item.quality
+        )
+        if (!resolved.isNullOrBlank()) return resolved
+        if (item.downloadUrl.isNotBlank()) return item.downloadUrl
+        return null
+    }
+
+    private suspend fun resolveEpisodeStreamUrl(
+        movieId: String,
+        title: String,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        quality: String
+    ): String? {
         try {
-            // 1. If it's Vskit shorts
-            if (item.movieId.startsWith("vskit_") || item.downloadUrl.contains("vskit") || item.downloadUrl.contains("msacdn")) {
-                val cleanId = item.movieId.removePrefix("vskit_")
+            // 1. Vskit shorts
+            if (movieId.startsWith("vskit_")) {
+                val cleanId = movieId.removePrefix("vskit_")
                 val eps = VskitShortsApiClient.fetchShortsEpisodes(cleanId)
-                val targetEp = eps.find { it.ep == item.episodeNumber } ?: eps.firstOrNull()
+                val targetEp = eps.find { it.ep == episodeNumber } ?: eps.firstOrNull()
                 if (targetEp != null) {
-                    val targetDigits = item.quality.filter { it.isDigit() }
-                    val matchingStream = targetEp.streams.find { it.resolution.contains(targetDigits) }
+                    val targetDigits = quality.filter { it.isDigit() }
+                    val matching = targetEp.streams.find { it.resolution.contains(targetDigits) }
                         ?: targetEp.streams.firstOrNull()
-                    val resolved = matchingStream?.url?.ifBlank { null } ?: targetEp.videoUrl.ifBlank { null }
-                    if (!resolved.isNullOrBlank()) return resolved
+                    val res = matching?.url?.ifBlank { null } ?: targetEp.videoUrl.ifBlank { null }
+                    if (!res.isNullOrBlank()) return res
                 }
             }
 
-            // 2. MovieBox movie, series episode, or short
-            val isShortItem = (!item.isSeries && item.seasonNumber > 0) || item.title.contains("Short", ignoreCase = true)
+            // 2. Story TV drama/short
+            val isStoryTv = movieId.startsWith("storytv_") || movieId.startsWith("story_")
+            if (isStoryTv) {
+                val cleanId = movieId.removePrefix("storytv_").removePrefix("story_")
+                val streamUrl = StoryTvApiClient.fetchEpisodeStream(cleanId, episodeNumber)
+                if (!streamUrl.isNullOrBlank()) {
+                    if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                        val qualities = StoryTvApiClient.fetchHlsStreamQualities(streamUrl)
+                        val targetDigits = quality.filter { it.isDigit() }
+                        val matched = qualities.find { extractHeightDigits(it.resolution) == targetDigits }
+                            ?: qualities.firstOrNull()
+                        return matched?.url?.ifBlank { null } ?: streamUrl
+                    }
+                    return streamUrl
+                }
+            }
+
+            // 3. MovieBox movie, series episode, or short
+            val isShortItem = (!isStoryTv && !movieId.startsWith("vskit_")) && (seasonNumber > 0 || title.contains("Short", ignoreCase = true))
             val result = MovieBoxApiClient.fetchPlayStreams(
                 context = context,
-                subjectId = item.movieId,
+                subjectId = movieId,
                 detailPath = "",
                 isShort = isShortItem,
-                season = item.seasonNumber,
-                episode = item.episodeNumber
+                season = seasonNumber,
+                episode = episodeNumber
             )
             val validStreams = result.streams.filter { it.url.isNotBlank() }
             if (validStreams.isNotEmpty()) {
-                val targetDigits = item.quality.filter { it.isDigit() }
+                val targetDigits = quality.filter { it.isDigit() }
                 val match = validStreams.firstOrNull { extractHeightDigits(it.resolution) == targetDigits }
                     ?: validStreams.firstOrNull { it.format.equals("MP4", ignoreCase = true) }
                     ?: validStreams.first()
                 return match.url
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to resolve fresh stream URL for ${item.id}: ${e.message}")
+            Log.e(TAG, "Failed resolving episode stream for $movieId ep $episodeNumber: ${e.message}")
         }
         return null
     }
 
     private fun extractHeightDigits(res: String): String {
         return res.split(",").firstOrNull()?.filter { it.isDigit() } ?: ""
+    }
+
+    /**
+     * Downloads multiple episodes sequentially and merges them into a single local continuous MP4 video.
+     */
+    private fun launchMergeDownloadJob(
+        initialItem: DownloadItem,
+        sortedEps: List<Pair<Int, Int>>,
+        tempFile: File,
+        targetFile: File,
+        firstStreamUrl: String
+    ) {
+        pausedItemIds.remove(initialItem.id)
+        activeJobs[initialItem.id]?.cancel()
+
+        val job = scope.launch {
+            var currentItem = initialItem
+            val totalEps = sortedEps.size
+
+            var downloadedBytes = if (tempFile.exists()) tempFile.length() else 0L
+            var lastSpeedSampleTime = System.currentTimeMillis()
+            var bytesAtLastSample = downloadedBytes
+            var lastDbUpdateTime = System.currentTimeMillis()
+            var currentSpeedStr = "0 KB/s"
+
+            try {
+                FileOutputStream(tempFile, downloadedBytes > 0).use { output ->
+                    for ((index, epPair) in sortedEps.withIndex()) {
+                        val (sNum, epNum) = epPair
+
+                        if (pausedItemIds.contains(currentItem.id) || !isActive) {
+                            output.flush()
+                            ensurePausedState(currentItem.id, tempFile)
+                            return@launch
+                        }
+
+                        val baseProgress = index.toFloat() / totalEps
+                        dao.update(
+                            currentItem.copy(
+                                progress = baseProgress,
+                                speedFormatted = "Ep $epNum of $totalEps ($currentSpeedStr)"
+                            )
+                        )
+
+                        // 1. Resolve episode stream URL
+                        val epUrl = if (index == 0 && firstStreamUrl.isNotBlank()) {
+                            firstStreamUrl
+                        } else {
+                            resolveEpisodeStreamUrl(
+                                movieId = currentItem.movieId,
+                                title = currentItem.title,
+                                seasonNumber = sNum,
+                                episodeNumber = epNum,
+                                quality = currentItem.quality
+                            )
+                        }
+
+                        if (epUrl.isNullOrBlank()) {
+                            Log.w(TAG, "All-in-One: stream URL not found for episode $epNum")
+                            continue
+                        }
+
+                        // 2. Download segments (if HLS) or direct stream
+                        if (isHlsUrl(epUrl)) {
+                            val segmentUrls = extractHlsSegmentUrls(epUrl, currentItem.quality)
+                            val totalSegs = segmentUrls.size
+                            for ((segIdx, segUrl) in segmentUrls.withIndex()) {
+                                if (pausedItemIds.contains(currentItem.id) || !isActive) {
+                                    output.flush()
+                                    ensurePausedState(currentItem.id, tempFile)
+                                    return@launch
+                                }
+
+                                val segResp = executeWithHeaderFallback(segUrl, 0L)
+                                if (segResp.isSuccessful && segResp.body != null) {
+                                    val bytes = segResp.body!!.bytes()
+                                    output.write(bytes)
+                                    downloadedBytes += bytes.size
+                                    segResp.close()
+                                } else {
+                                    segResp.close()
+                                    delay(300)
+                                    if (pausedItemIds.contains(currentItem.id) || !isActive) {
+                                        output.flush()
+                                        ensurePausedState(currentItem.id, tempFile)
+                                        return@launch
+                                    }
+                                    val retryResp = executeWithHeaderFallback(segUrl, 0L)
+                                    if (retryResp.isSuccessful && retryResp.body != null) {
+                                        val bytes = retryResp.body!!.bytes()
+                                        output.write(bytes)
+                                        downloadedBytes += bytes.size
+                                    }
+                                    retryResp.close()
+                                }
+
+                                val now = System.currentTimeMillis()
+                                if (now - lastSpeedSampleTime >= 800) {
+                                    val bytesDelta = downloadedBytes - bytesAtLastSample
+                                    val timeSec = (now - lastSpeedSampleTime) / 1000.0
+                                    if (timeSec > 0) {
+                                        val speed = (bytesDelta / timeSec).toLong()
+                                        currentSpeedStr = formatSpeed(speed)
+                                    }
+                                    lastSpeedSampleTime = now
+                                    bytesAtLastSample = downloadedBytes
+                                }
+
+                                if (now - lastDbUpdateTime >= 1000 || segIdx == totalSegs - 1) {
+                                    val segProgressInEp = if (totalSegs > 0) (segIdx.toFloat() / totalSegs) else 0f
+                                    val overallProgress = (index + segProgressInEp) / totalEps
+                                    dao.update(
+                                        currentItem.copy(
+                                            downloadedBytes = downloadedBytes,
+                                            progress = overallProgress.coerceIn(0f, 0.99f),
+                                            speedFormatted = "Ep $epNum of $totalEps ($currentSpeedStr)"
+                                        )
+                                    )
+                                    lastDbUpdateTime = now
+                                }
+                            }
+                        } else {
+                            // Direct stream (MP4)
+                            val directResp = executeWithHeaderFallback(epUrl, 0L)
+                            if (directResp.isSuccessful && directResp.body != null) {
+                                val input = directResp.body!!.byteStream()
+                                val buffer = ByteArray(64 * 1024)
+                                var read = input.read(buffer)
+                                while (read != -1) {
+                                    if (pausedItemIds.contains(currentItem.id) || !isActive) {
+                                        output.flush()
+                                        input.close()
+                                        directResp.close()
+                                        ensurePausedState(currentItem.id, tempFile)
+                                        return@launch
+                                    }
+                                    output.write(buffer, 0, read)
+                                    downloadedBytes += read
+
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastSpeedSampleTime >= 800) {
+                                        val bytesDelta = downloadedBytes - bytesAtLastSample
+                                        val timeSec = (now - lastSpeedSampleTime) / 1000.0
+                                        if (timeSec > 0) {
+                                            val speed = (bytesDelta / timeSec).toLong()
+                                            currentSpeedStr = formatSpeed(speed)
+                                        }
+                                        lastSpeedSampleTime = now
+                                        bytesAtLastSample = downloadedBytes
+                                    }
+
+                                    if (now - lastDbUpdateTime >= 1000) {
+                                        val overallProgress = (index + 0.5f) / totalEps
+                                        dao.update(
+                                            currentItem.copy(
+                                                downloadedBytes = downloadedBytes,
+                                                progress = overallProgress.coerceIn(0f, 0.99f),
+                                                speedFormatted = "Ep $epNum of $totalEps ($currentSpeedStr)"
+                                            )
+                                        )
+                                        lastDbUpdateTime = now
+                                    }
+
+                                    read = input.read(buffer)
+                                }
+                                input.close()
+                                directResp.close()
+                            } else {
+                                directResp.close()
+                            }
+                        }
+                    }
+                    output.flush()
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException || pausedItemIds.contains(currentItem.id) || !isActive) {
+                    ensurePausedState(currentItem.id, tempFile)
+                    return@launch
+                }
+                Log.e(TAG, "All-in-One download error: ${e.message}", e)
+                dao.update(
+                    currentItem.copy(
+                        status = DownloadStatus.FAILED,
+                        errorMessage = e.localizedMessage ?: "Merge download error",
+                        speedFormatted = ""
+                    )
+                )
+                return@launch
+            } finally {
+                activeJobs.remove(initialItem.id)
+            }
+
+            if (pausedItemIds.contains(currentItem.id) || !isActive) {
+                ensurePausedState(currentItem.id, tempFile)
+                return@launch
+            }
+
+            // Finish download: rename tempFile to targetFile
+            if (targetFile.exists()) targetFile.delete()
+            val success = tempFile.renameTo(targetFile)
+            val finalPath = if (success) targetFile.absolutePath else tempFile.absolutePath
+
+            val completedItem = currentItem.copy(
+                downloadedBytes = downloadedBytes,
+                totalBytes = downloadedBytes,
+                progress = 1.0f,
+                speedFormatted = "",
+                localFilePath = finalPath,
+                status = DownloadStatus.COMPLETED,
+                errorMessage = null
+            )
+            dao.update(completedItem)
+
+            // Export to phone Gallery
+            exportVideoToGallery(File(finalPath), completedItem)
+        }
+
+        activeJobs[initialItem.id] = job
+    }
+
+    private suspend fun extractHlsSegmentUrls(hlsUrl: String, targetQuality: String): List<String> {
+        val resp = executeWithHeaderFallback(hlsUrl, 0L)
+        if (!resp.isSuccessful || resp.body == null) {
+            resp.close()
+            return emptyList()
+        }
+        val playlistText = resp.body!!.string()
+        resp.close()
+
+        var mediaPlaylistUrl = hlsUrl
+        var mediaPlaylistContent = playlistText
+
+        if (playlistText.contains("#EXT-X-STREAM-INF")) {
+            val targetDigits = targetQuality.filter { it.isDigit() }
+            val lines = playlistText.lines()
+            var selectedUri: String? = null
+            var highestBandwidthUri: String? = null
+            var maxBandwidth = 0L
+
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i].trim()
+                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                    val bwMatch = Regex("BANDWIDTH=(\\d+)").find(line)
+                    val bw = bwMatch?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                    val resMatch = Regex("RESOLUTION=(\\d+x\\d+)").find(line)?.value ?: ""
+
+                    var nextLine = ""
+                    var j = i + 1
+                    while (j < lines.size) {
+                        val candidate = lines[j].trim()
+                        if (candidate.isNotBlank() && !candidate.startsWith("#")) {
+                            nextLine = candidate
+                            break
+                        }
+                        j++
+                    }
+
+                    if (nextLine.isNotBlank()) {
+                        if (bw > maxBandwidth) {
+                            maxBandwidth = bw
+                            highestBandwidthUri = nextLine
+                        }
+                        if (targetDigits.isNotBlank() && (line.contains(targetDigits) || resMatch.contains(targetDigits))) {
+                            selectedUri = nextLine
+                            break
+                        }
+                    }
+                }
+                i++
+            }
+
+            val chosenVariant = selectedUri ?: highestBandwidthUri
+            if (!chosenVariant.isNullOrBlank()) {
+                mediaPlaylistUrl = resolveUrl(hlsUrl, chosenVariant)
+                val variantResp = executeWithHeaderFallback(mediaPlaylistUrl, 0L)
+                if (variantResp.isSuccessful && variantResp.body != null) {
+                    mediaPlaylistContent = variantResp.body!!.string()
+                    variantResp.close()
+                } else {
+                    variantResp.close()
+                }
+            }
+        }
+
+        val segmentUrls = mutableListOf<String>()
+        mediaPlaylistContent.lines().forEach { rawLine ->
+            val line = rawLine.trim()
+            if (line.isNotBlank() && !line.startsWith("#")) {
+                segmentUrls.add(resolveUrl(mediaPlaylistUrl, line))
+            }
+        }
+        return segmentUrls
     }
 
     private fun launchDownloadJob(
@@ -491,10 +902,9 @@ class MovieDownloadManager private constructor(private val context: Context) {
         url: String,
         existingBytes: Long = 0L
     ): Response {
-        // Decide Tier 1 referer
-        val isVskitOnly = url.contains("vskit.online")
-        val primaryReferer = if (isVskitOnly) REFERER_VSKIT else REFERER_MOVIEBOX
-        val primaryOrigin = if (isVskitOnly) ORIGIN_VSKIT else ORIGIN_MOVIEBOX
+        val isVskitOnly = url.contains("vskit.online") || url.contains("msacdn")
+        val isMovieBox = url.contains("moviebox") || url.contains("box") || url.contains("freshext")
+        val isStoryTvOrCdn = !isMovieBox && !isVskitOnly
 
         fun buildRequest(referer: String?, origin: String?, includeRange: Boolean): Request {
             val b = Request.Builder()
@@ -508,6 +918,37 @@ class MovieDownloadManager private constructor(private val context: Context) {
             }
             return b.build()
         }
+
+        // For Story TV or general CDN URLs, attempt direct request without referer/origin first
+        if (isStoryTvOrCdn) {
+            val respDirect = okHttpClient.newCall(buildRequest(null, null, existingBytes > 0)).execute()
+            if (respDirect.isSuccessful) return respDirect
+            if (existingBytes > 0 && (respDirect.code == 416 || respDirect.code == 400)) {
+                respDirect.close()
+                val respNoRange = okHttpClient.newCall(buildRequest(null, null, false)).execute()
+                if (respNoRange.isSuccessful) return respNoRange
+                respNoRange.close()
+            } else {
+                respDirect.close()
+            }
+
+            // Also try with ktor-client User-Agent if Story TV server
+            val ktorReq = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "ktor-client")
+                .addHeader("Accept", "*/*")
+                .apply {
+                    if (existingBytes > 0) addHeader("Range", "bytes=$existingBytes-")
+                }
+                .build()
+            val ktorResp = okHttpClient.newCall(ktorReq).execute()
+            if (ktorResp.isSuccessful) return ktorResp
+            ktorResp.close()
+        }
+
+        // Decide Tier 1 referer for MovieBox or Vskit
+        val primaryReferer = if (isVskitOnly) REFERER_VSKIT else REFERER_MOVIEBOX
+        val primaryOrigin = if (isVskitOnly) ORIGIN_VSKIT else ORIGIN_MOVIEBOX
 
         // 1. Try Primary
         val resp1 = okHttpClient.newCall(buildRequest(primaryReferer, primaryOrigin, true)).execute()

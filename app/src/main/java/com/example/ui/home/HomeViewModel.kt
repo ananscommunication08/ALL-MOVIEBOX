@@ -101,7 +101,12 @@ data class HomeUiState(
     val storyTvHasMore: Boolean = true,
     val storyTvPage: Int = 0,
     val storyTvLanguages: List<com.example.data.api.StoryTvLanguage> = emptyList(),
-    val selectedStoryTvLanguage: com.example.data.api.StoryTvLanguage? = null
+    val selectedStoryTvLanguage: com.example.data.api.StoryTvLanguage? = null,
+    val freeReelsItems: List<MovieItem> = emptyList(),
+    val isFreeReelsLoading: Boolean = false,
+    val isFreeReelsLoadingMore: Boolean = false,
+    val freeReelsHasMore: Boolean = true,
+    val freeReelsNextCursor: String = ""
 ) {
     val currentScreen: AppScreen get() = screenStack.lastOrNull() ?: AppScreen.Home
 }
@@ -126,6 +131,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         loadShortsTvData()
         loadLookrFeed()
         loadStoryTvFeed()
+        loadFreeReelsFeed()
     }
 
     private fun loadData() {
@@ -158,6 +164,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (server == AppServer.SERVER_4 && _uiState.value.storyTvItems.isEmpty()) {
             loadStoryTvFeed()
+        }
+        if (server == AppServer.SERVER_5 && _uiState.value.freeReelsItems.isEmpty()) {
+            loadFreeReelsFeed()
         }
     }
 
@@ -299,7 +308,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             AppServer.SERVER_1 -> AppServer.SERVER_2
             AppServer.SERVER_2 -> AppServer.SERVER_3
             AppServer.SERVER_3 -> AppServer.SERVER_4
-            AppServer.SERVER_4 -> AppServer.SERVER_1
+            AppServer.SERVER_4 -> AppServer.SERVER_5
+            AppServer.SERVER_5 -> AppServer.SERVER_1
         }
         switchServer(nextServer)
     }
@@ -364,13 +374,66 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectStoryTvLanguage(language: com.example.data.api.StoryTvLanguage) {
         viewModelScope.launch {
-            _uiState.update { it.copy(selectedStoryTvLanguage = language, isStoryTvLoading = true) }
+            _uiState.update { it.copy(selectedStoryTvLanguage = language, isStoryTvLoading = true, storyTvItems = emptyList()) }
             try {
                 repository.selectStoryTvLanguage(language.langId)
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Error selecting Story TV language", e)
             }
             loadStoryTvFeed(isRefresh = true)
+        }
+    }
+
+    /**
+     * Server 5: FreeReels Feed Loader
+     */
+    fun loadFreeReelsFeed(isRefresh: Boolean = false) {
+        viewModelScope.launch {
+            if (isRefresh) {
+                _uiState.update { it.copy(isFreeReelsLoading = true, freeReelsNextCursor = "", freeReelsHasMore = true) }
+            } else {
+                _uiState.update { it.copy(isFreeReelsLoading = it.freeReelsItems.isEmpty()) }
+            }
+            try {
+                val (items, nextCursor) = repository.fetchFreeReelsHome("503")
+                _uiState.update {
+                    it.copy(
+                        freeReelsItems = items,
+                        freeReelsNextCursor = nextCursor ?: "",
+                        freeReelsHasMore = !nextCursor.isNullOrBlank(),
+                        isFreeReelsLoading = false
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Error loading FreeReels feed", e)
+                _uiState.update { it.copy(isFreeReelsLoading = false) }
+            }
+        }
+    }
+
+    fun loadMoreFreeReelsItems() {
+        val state = _uiState.value
+        if (state.isFreeReelsLoading || state.isFreeReelsLoadingMore || !state.freeReelsHasMore || state.freeReelsNextCursor.isBlank()) return
+        val cursor = state.freeReelsNextCursor
+        viewModelScope.launch {
+            _uiState.update { it.copy(isFreeReelsLoadingMore = true) }
+            try {
+                val (items, pageInfo) = repository.fetchFreeReelsFeed(cursor)
+                val (newCursor, hasMore) = pageInfo
+                _uiState.update {
+                    val existingIds = it.freeReelsItems.map { item -> item.id }.toSet()
+                    val filtered = items.filter { item -> item.id !in existingIds }
+                    it.copy(
+                        freeReelsItems = it.freeReelsItems + filtered,
+                        freeReelsNextCursor = newCursor ?: "",
+                        freeReelsHasMore = hasMore && !newCursor.isNullOrBlank(),
+                        isFreeReelsLoadingMore = false
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Error loading more FreeReels items", e)
+                _uiState.update { it.copy(isFreeReelsLoadingMore = false) }
+            }
         }
     }
 
@@ -592,12 +655,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             delay(150) // fast debounce typing
             _uiState.update { it.copy(isSearchingSuggestions = true) }
             val suggestions = when (_uiState.value.activeServer) {
-                AppServer.SERVER_4 -> {
-                    val localSuggestions = _uiState.value.storyTvItems.map { it.title }
+                AppServer.SERVER_5 -> {
+                    val remoteSuggestions = try {
+                        com.example.data.api.FreeReelsApiClient.fetchSearchKeywords(trimmed)
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    val localSuggestions = _uiState.value.freeReelsItems.map { it.title }
                         .filter { it.contains(trimmed, ignoreCase = true) }
                         .distinct()
-                        .take(10)
-                    localSuggestions
+                    (remoteSuggestions + localSuggestions).distinct().take(10)
+                }
+                AppServer.SERVER_4 -> {
+                    val remoteSuggestions = try {
+                        repository.searchStoryTv(trimmed).map { it.title }.filter { it.isNotBlank() }
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    val localSuggestions = _uiState.value.storyTvItems.map { it.title }
+                        .filter { it.contains(trimmed, ignoreCase = true) }
+                    (remoteSuggestions + localSuggestions).distinct().take(10)
                 }
                 AppServer.SERVER_3 -> {
                     val remoteSuggestions = try {
@@ -671,7 +748,30 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         searchJob = viewModelScope.launch {
-            if (_uiState.value.activeServer == AppServer.SERVER_4) {
+            if (_uiState.value.activeServer == AppServer.SERVER_5) {
+                // Server 5 (FreeReels) search
+                val freeReelsMatches = try {
+                    repository.searchFreeReels(q)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val localMatches = _uiState.value.freeReelsItems
+                    .distinctBy { it.id }
+                    .filter {
+                        it.title.contains(q, ignoreCase = true) ||
+                                it.genre.contains(q, ignoreCase = true) ||
+                                it.description.contains(q, ignoreCase = true)
+                    }
+                val combined = (freeReelsMatches + localMatches).distinctBy { it.id }
+                _uiState.update {
+                    it.copy(
+                        searchResults = if (combined.isNotEmpty()) combined else localMatches,
+                        isSearchingMovies = false,
+                        hasMoreSearchResults = false,
+                        isMovieBoxSearchAutoLoading = false
+                    )
+                }
+            } else if (_uiState.value.activeServer == AppServer.SERVER_4) {
                 // Server 4 (Story TV) search
                 val storyMatches = try {
                     repository.searchStoryTv(q)
@@ -1049,8 +1149,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (_uiState.value.activeServer == AppServer.SERVER_2 ||
             _uiState.value.activeServer == AppServer.SERVER_4 ||
+            _uiState.value.activeServer == AppServer.SERVER_5 ||
             movie.isStoryTvServer ||
-            movie.source.equals("storytv", ignoreCase = true)
+            movie.isFreeReelsServer ||
+            movie.source.equals("storytv", ignoreCase = true) ||
+            movie.source.equals("freereels", ignoreCase = true)
         ) {
             openShortsPlayer(movie, playlist)
             return
@@ -1079,7 +1182,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val movie = banner.toMovieItem()
         if (_uiState.value.activeServer == AppServer.SERVER_2 ||
             _uiState.value.activeServer == AppServer.SERVER_4 ||
-            movie.isStoryTvServer
+            _uiState.value.activeServer == AppServer.SERVER_5 ||
+            movie.isStoryTvServer ||
+            movie.isFreeReelsServer
         ) {
             openShortsPlayer(movie)
         } else {

@@ -4,6 +4,8 @@ import android.util.Log
 import com.example.data.model.MovieItem
 import com.example.data.model.MovieStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -43,11 +45,23 @@ object StoryTvApiClient {
     private const val NETWORK_TYPE = "WIFI"
     private const val USER_AGENT = "ktor-client"
 
+    @Volatile
+    var activeLanguageId: Int = 2 // Default Hindi
+
+    // Thread-safe in-memory cache for episode stream URLs: key = "${showId}_${episodeIndex}"
+    private val episodeStreamCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 16
+            })
+            .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 
@@ -80,6 +94,11 @@ object StoryTvApiClient {
      * /feedservice/v2/explore/shows?page={page}&size={size}&intCount=0
      */
     suspend fun fetchExploreShows(page: Int = 0, size: Int = 50): Pair<List<MovieItem>, Boolean> = withContext(Dispatchers.IO) {
+        if (page == 0 && activeLanguageId > 0) {
+            try {
+                selectLanguage(activeLanguageId)
+            } catch (_: Exception) {}
+        }
         val url = "$BASE_URL/feedservice/v2/explore/shows?page=$page&size=$size&intCount=0"
         try {
             val response = httpClient.newCall(buildRequest(url)).execute()
@@ -117,7 +136,10 @@ object StoryTvApiClient {
                     }
                 }
 
-                val epsUrl = contentInfo?.optString("epsUrl", "") ?: ""
+                val epsIdx = contentInfo?.optInt("index", 0) ?: 0
+                val rawEpsUrl = contentInfo?.optString("epsUrl", "") ?: ""
+                // Only treat as directUrl for episode 1 if contentInfo index is strictly 1
+                val epsUrl = if (epsIdx == 1) rawEpsUrl else ""
                 val epsTitle = contentInfo?.optString("epsTitle", "") ?: ""
 
                 val realTag = genre.ifBlank { tagsList.firstOrNull() ?: "Drama" }
@@ -193,6 +215,7 @@ object StoryTvApiClient {
      * /userservice/v1/language/select?langId={langId}
      */
     suspend fun selectLanguage(langId: Int): Boolean = withContext(Dispatchers.IO) {
+        activeLanguageId = langId
         val url = "$BASE_URL/userservice/v1/language/select?langId=$langId"
         try {
             val jsonBody = JSONObject().apply { put("langId", langId) }.toString()
@@ -264,6 +287,9 @@ object StoryTvApiClient {
                 val streamUrl = obj.optString("epsUrl", "").ifBlank { obj.optString("url", "") }
                 val thumb = obj.optString("thumb", "").ifBlank { obj.optString("imageUrl", "") }
                 val subTxt = obj.optString("subTxt", "")
+                if (streamUrl.isNotBlank()) {
+                    episodeStreamCache["${cleanId}_$idx"] = streamUrl
+                }
                 list.add(StoryTvEpisodeItem(
                     index = idx,
                     contentId = contentId,
@@ -283,12 +309,33 @@ object StoryTvApiClient {
     /**
      * Convenience method to fetch stream URL for a specific episode index
      */
-    suspend fun fetchEpisodeStream(showId: String, episodeIndex: Int): String? = withContext(Dispatchers.IO) {
+    suspend fun fetchEpisodeStream(showId: String, episodeIndex: Int, forceRefresh: Boolean = false): String? = withContext(Dispatchers.IO) {
         val cleanId = showId.filter { it.isDigit() }.ifBlank { showId }
-        val cursor = (episodeIndex - 1).coerceAtLeast(0)
-        val metadata = fetchEpisodeMetadata(cleanId, cursor = cursor)
-        val found = metadata.find { it.index == episodeIndex } ?: metadata.firstOrNull()
-        found?.url?.ifBlank { null }
+        val cacheKey = "${cleanId}_$episodeIndex"
+        if (!forceRefresh) {
+            episodeStreamCache[cacheKey]?.let { cachedUrl ->
+                if (cachedUrl.isNotBlank()) return@withContext cachedUrl
+            }
+        }
+
+        // Batches of 5 in Story TV: 1..5 is cursor 0, 6..10 is cursor 5, etc.
+        val alignedCursor = ((episodeIndex - 1) / 5) * 5
+        var metadata = fetchEpisodeMetadata(cleanId, cursor = alignedCursor)
+        var found = metadata.find { it.index == episodeIndex }
+
+        // If not found in aligned batch, try offset cursor (episodeIndex - 1)
+        if (found == null || found.url.isBlank()) {
+            val offsetCursor = (episodeIndex - 1).coerceAtLeast(0)
+            if (offsetCursor != alignedCursor) {
+                metadata = fetchEpisodeMetadata(cleanId, cursor = offsetCursor)
+                found = metadata.find { it.index == episodeIndex }
+            }
+        }
+        val url = found?.url?.ifBlank { null }
+        if (url != null) {
+            episodeStreamCache[cacheKey] = url
+        }
+        url
     }
 
     /**
@@ -360,23 +407,42 @@ object StoryTvApiClient {
         }
     }
 
-    /**
-     * Search API
-     * /searchservice/v1/search/{query}
-     */
-    suspend fun searchShows(query: String): List<MovieItem> = withContext(Dispatchers.IO) {
-        if (query.isBlank()) return@withContext emptyList()
-        val cleanQuery = URLEncoder.encode(query.trim(), "UTF-8")
+    private val initializedLangs = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
+    private suspend fun searchShowsForLanguage(cleanQuery: String, langId: Int): List<MovieItem> = withContext(Dispatchers.IO) {
+        val devId = "storytv_lang_$langId"
+        if (initializedLangs[langId] != true) {
+            try {
+                val selUrl = "$BASE_URL/userservice/v1/language/select?langId=$langId"
+                val body = JSONObject().apply { put("langId", langId) }.toString().toRequestBody("application/json".toMediaType())
+                val req = Request.Builder()
+                    .url(selUrl)
+                    .addHeader("Authorization", AUTH_TOKEN)
+                    .addHeader("appVersion", APP_VERSION)
+                    .addHeader("deviceId", devId)
+                    .post(body)
+                    .build()
+                httpClient.newCall(req).execute().close()
+                initializedLangs[langId] = true
+            } catch (_: Exception) {}
+        }
         val url = "$BASE_URL/searchservice/v1/search/$cleanQuery"
+        val req = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", AUTH_TOKEN)
+            .addHeader("appVersion", APP_VERSION)
+            .addHeader("deviceId", devId)
+            .addHeader("Accept", "application/json")
+            .get()
+            .build()
         try {
-            val response = httpClient.newCall(buildRequest(url)).execute()
+            val response = httpClient.newCall(req).execute()
             val body = response.body?.string() ?: return@withContext emptyList()
             if (!response.isSuccessful) return@withContext emptyList()
 
             val root = JSONObject(body)
             val dataObj = root.optJSONObject("data") ?: return@withContext emptyList()
             val contentArray = dataObj.optJSONArray("content") ?: JSONArray()
-
             val list = mutableListOf<MovieItem>()
             for (i in 0 until contentArray.length()) {
                 val obj = contentArray.optJSONObject(i) ?: continue
@@ -424,9 +490,80 @@ object StoryTvApiClient {
                 )
             }
             list
-        } catch (e: Exception) {
-            Log.e(TAG, "Error searching shows query=$query", e)
+        } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    /**
+     * Search API across ALL languages simultaneously
+     * Ensures NO language filter is applied to suggestions or search results
+     */
+    suspend fun searchShows(query: String): List<MovieItem> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        val cleanQuery = URLEncoder.encode(query.trim(), "UTF-8")
+        val supportedLangs = listOf(2, 6, 7, 8, 9)
+        val allResults = java.util.concurrent.CopyOnWriteArrayList<MovieItem>()
+
+        kotlinx.coroutines.coroutineScope {
+            supportedLangs.forEach { lid ->
+                launch {
+                    val items = searchShowsForLanguage(cleanQuery, lid)
+                    allResults.addAll(items)
+                }
+            }
+        }
+
+        val distinct = allResults.distinctBy { it.id }
+        if (distinct.isNotEmpty()) {
+            distinct
+        } else {
+            // Direct fallback search
+            try {
+                val url = "$BASE_URL/searchservice/v1/search/$cleanQuery"
+                val response = httpClient.newCall(buildRequest(url)).execute()
+                val body = response.body?.string() ?: return@withContext emptyList()
+                if (!response.isSuccessful) return@withContext emptyList()
+                val root = JSONObject(body)
+                val dataObj = root.optJSONObject("data") ?: return@withContext emptyList()
+                val contentArray = dataObj.optJSONArray("content") ?: JSONArray()
+                val list = mutableListOf<MovieItem>()
+                for (i in 0 until contentArray.length()) {
+                    val obj = contentArray.optJSONObject(i) ?: continue
+                    val id = obj.optString("id", "")
+                    val title = obj.optString("title", "")
+                    if (id.isBlank() && title.isBlank()) continue
+                    val imageUrl = obj.optString("imageUrl", "")
+                    val numOfEpisodes = obj.optInt("numOfEpisodes", 0)
+                    list.add(
+                        MovieItem(
+                            id = id,
+                            title = title,
+                            description = "Drama",
+                            coverUrl = imageUrl,
+                            backdropUrl = imageUrl,
+                            rating = "",
+                            genre = "Drama",
+                            country = "Story TV",
+                            corner = "Drama",
+                            isShort = true,
+                            detailPath = id,
+                            directUrl = "",
+                            source = "storytv",
+                            uploadBy = "StoryTV",
+                            totalEpisodes = numOfEpisodes,
+                            isSeries = false,
+                            isVskitServer = false,
+                            isStoryTvServer = true,
+                            subjectType = 7
+                        )
+                    )
+                }
+                list
+            } catch (e: Exception) {
+                Log.e(TAG, "Error searching shows query=$query", e)
+                emptyList()
+            }
         }
     }
 }

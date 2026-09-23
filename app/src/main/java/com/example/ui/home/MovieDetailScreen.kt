@@ -81,19 +81,20 @@ fun MovieDetailScreen(
     onToggleWatchlist: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val isTv = remember { com.example.util.DeviceUtils.isAndroidTv(context) }
     var activeMovie by remember(movie) { mutableStateOf(movie) }
-    var isFullscreen by remember { mutableStateOf(false) }
+    var isFullscreen by remember { mutableStateOf(isTv) }
     val detailScrollState = rememberScrollState()
 
-    // Intercept back key: if fullscreen, exit fullscreen; otherwise navigate back
-    BackHandler(enabled = isFullscreen) {
-        isFullscreen = false
+    // Intercept back key: on TV exit screen directly; on mobile if fullscreen exit fullscreen, else exit screen
+    BackHandler(enabled = true) {
+        if (isTv || !isFullscreen) {
+            onBackClick()
+        } else {
+            isFullscreen = false
+        }
     }
-    BackHandler(enabled = !isFullscreen) {
-        onBackClick()
-    }
-
-    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     // Quality state managed inside player
@@ -395,6 +396,7 @@ fun MovieDetailScreen(
 
                 DetailVideoPlayer(
                     movie = effectiveMovie,
+                    onBackClick = onBackClick,
                     isSeries = isSeries,
                     selectedSeason = if (isSeries) selectedSeason else 0,
                     selectedEpisode = if (isSeries) (selectedEpisode.toIntOrNull() ?: 1) else 0,

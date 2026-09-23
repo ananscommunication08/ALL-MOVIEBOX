@@ -40,7 +40,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
@@ -54,12 +53,18 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import android.view.KeyEvent
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.example.data.api.VskitShortsApiClient
 import com.example.data.api.LookrApiClient
 import com.example.data.model.VskitEpisodeItem
-import com.example.data.download.MovieDownloadManager
 import android.widget.Toast
 import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
@@ -106,6 +111,8 @@ import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.data.api.MovieBoxApiClient
@@ -217,7 +224,9 @@ private fun buildShortMediaSource(
                 .createMediaSource(mediaItem)
         }
         else -> {
-            ProgressiveMediaSource.Factory(dataSourceFactory)
+            val extractorsFactory = DefaultExtractorsFactory()
+                .setMp4ExtractorFlags(Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS)
+            ProgressiveMediaSource.Factory(dataSourceFactory, extractorsFactory)
                 .createMediaSource(mediaItem)
         }
     }
@@ -376,6 +385,7 @@ fun ShortsReelPlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isTv = remember { com.example.util.DeviceUtils.isAndroidTv(context) }
     val activity = remember { context.findActivity() }
     val scope = rememberCoroutineScope()
 
@@ -389,18 +399,35 @@ fun ShortsReelPlayer(
     var storyTvEpisodes by remember(movie.id) {
         mutableStateOf<List<com.example.data.api.StoryTvEpisodeItem>>(emptyList())
     }
+    var freeReelsEpisodes by remember(movie.id) {
+        mutableStateOf<List<com.example.data.model.FreeReelsEpisodeItem>>(emptyList())
+    }
     var currentDubs by remember(movie.id, detailedInfo) {
         mutableStateOf(detailedInfo?.dubs?.ifEmpty { null } ?: movie.dubs)
     }
     var activePlayingStreamUrl by remember { mutableStateOf("") }
 
-    LaunchedEffect(movie.id, movie.detailPath, movie.isVskitServer, movie.isStoryTvServer, movie.source) {
+    LaunchedEffect(movie.id, movie.detailPath, movie.isVskitServer, movie.isStoryTvServer, movie.isFreeReelsServer, movie.source) {
+        val isFreeReels = movie.isFreeReelsServer || movie.source.equals("freereels", ignoreCase = true)
         val isStoryTv = movie.isStoryTvServer || movie.source.equals("storytv", ignoreCase = true)
         val isVskit = movie.isVskitServer || movie.source.equals("vskit", ignoreCase = true) ||
             movie.uploadBy.equals("ShortsTV", ignoreCase = true) || movie.customHeaders.containsKey("X-Site-Domain")
         val subjectId = movie.id.ifBlank { movie.detailPath }
 
-        if (isStoryTv) {
+        if (isFreeReels) {
+            launch(Dispatchers.IO) {
+                try {
+                    val eps = com.example.data.api.FreeReelsApiClient.fetchEpisodes(subjectId)
+                    if (eps.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            freeReelsEpisodes = eps
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("ShortsReelPlayer", "Error loading FreeReels episodes", e)
+                }
+            }
+        } else if (isStoryTv) {
             val cleanSubjId = subjectId.filter { it.isDigit() }.ifBlank { subjectId }
             launch(Dispatchers.IO) {
                 try {
@@ -426,29 +453,26 @@ fun ShortsReelPlayer(
                                 val meta = initialMeta.find { it.index == ep.index }
                                 if (meta != null && meta.url.isNotBlank()) {
                                     ep.copy(url = meta.url, thumb = meta.thumb)
-                                } else if (ep.index == 1 && movie.directUrl.isNotBlank()) {
-                                    ep.copy(url = movie.directUrl)
                                 } else ep
                             }
                         }
                     }
 
-                    // Background prefetch remaining metadata batches so all episodes have stream URLs ready
-                    var cursor = 0
-                    while (cursor < total) {
-                        if (cursor != initialCursor) {
-                            val batch = com.example.data.api.StoryTvApiClient.fetchEpisodeMetadata(cleanSubjId, cursor = cursor)
-                            if (batch.isEmpty()) break
+                    // Fetch current episode batch and next batch
+                    val nextCursor = initialCursor + 5
+                    if (nextCursor < total) {
+                        val nextBatch = com.example.data.api.StoryTvApiClient.fetchEpisodeMetadata(cleanSubjId, cursor = nextCursor)
+                        if (nextBatch.isNotEmpty()) {
                             withContext(Dispatchers.Main) {
-                                storyTvEpisodes = storyTvEpisodes.map { ep ->
-                                    val meta = batch.find { it.index == ep.index }
+                                val current = storyTvEpisodes
+                                storyTvEpisodes = current.map { ep ->
+                                    val meta = nextBatch.find { it.index == ep.index }
                                     if (meta != null && meta.url.isNotBlank() && ep.url.isBlank()) {
                                         ep.copy(url = meta.url, thumb = meta.thumb)
                                     } else ep
                                 }
                             }
                         }
-                        cursor += 5
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("ShortsReelPlayer", "Error loading Story TV episodes", e)
@@ -486,8 +510,10 @@ fun ShortsReelPlayer(
     }
 
     // Resolve episodes of this short drama:
-    val resolvedEpisodes = remember(episodes, detailedInfo, vskitEpisodes, storyTvEpisodes, movie.corner, movie.totalEpisodes) {
-        if (storyTvEpisodes.isNotEmpty()) {
+    val resolvedEpisodes = remember(episodes, detailedInfo, vskitEpisodes, storyTvEpisodes, freeReelsEpisodes, movie.corner, movie.totalEpisodes) {
+        if (freeReelsEpisodes.isNotEmpty()) {
+            freeReelsEpisodes.map { String.format("%02d", it.index) }
+        } else if (storyTvEpisodes.isNotEmpty()) {
             storyTvEpisodes.map { String.format("%02d", it.index) }
         } else if (vskitEpisodes.isNotEmpty()) {
             vskitEpisodes.map { String.format("%02d", it.ep) }
@@ -513,17 +539,24 @@ fun ShortsReelPlayer(
 
     // Build the reel episode items:
     // Each reel page is an EPISODE of this short drama!
-    val reelItems = remember(movie, resolvedEpisodes, vskitEpisodes, storyTvEpisodes, selectedSeason) {
+    val reelItems = remember(movie, resolvedEpisodes, vskitEpisodes, storyTvEpisodes, freeReelsEpisodes, selectedSeason) {
         resolvedEpisodes.mapIndexed { index, epStr ->
             val epNum = epStr.toIntOrNull() ?: (index + 1)
             val vskitItem = vskitEpisodes.find { it.ep == epNum }
             val storyTvItem = storyTvEpisodes.find { it.index == epNum }
+            val freeReelsItem = freeReelsEpisodes.find { it.index == epNum }
             val isStory = movie.isStoryTvServer || movie.source.equals("storytv", ignoreCase = true)
-            val directStream = if (isStory) {
+            val isFreeReels = movie.isFreeReelsServer || movie.source.equals("freereels", ignoreCase = true)
+            val directStream = if (isFreeReels) {
+                freeReelsItem?.playableUrl?.ifBlank { null } ?: if (epNum == 1) movie.directUrl else ""
+            } else if (isStory) {
                 storyTvItem?.url?.ifBlank { null } ?: if (epNum == 1) movie.directUrl else ""
             } else {
                 vskitItem?.videoUrl ?: ""
             }
+            val sub = freeReelsItem?.name?.ifBlank { null }
+                ?: storyTvItem?.title?.ifBlank { "Episode $epNum" }
+                ?: "Episode $epNum"
             ReelEpisodeItem(
                 id = "${movie.id}_s${selectedSeason}_ep_${epNum}",
                 movie = movie,
@@ -531,7 +564,7 @@ fun ShortsReelPlayer(
                 episode = epNum,
                 episodeFormatted = epStr,
                 title = movie.title,
-                subtitle = storyTvItem?.title?.ifBlank { "Episode $epNum" } ?: "Episode $epNum",
+                subtitle = sub,
                 description = movie.description,
                 directStreamUrl = directStream,
                 directStreams = vskitItem?.streams ?: emptyList(),
@@ -598,7 +631,6 @@ fun ShortsReelPlayer(
     var isFetchingStream by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
     var isLocked by remember { mutableStateOf(false) }
-    var showDownloadDialog by remember { mutableStateOf(false) }
     var showChooseEpisodeModal by remember { mutableStateOf(false) }
     val streamCache = remember { mutableMapOf<String, CachedShortStream>() }
     var userManualQualityOverride by remember { mutableStateOf<String?>(null) }
@@ -608,12 +640,17 @@ fun ShortsReelPlayer(
     var isSeeking by remember { mutableStateOf(false) }
     var showPlayPauseIndicator by remember { mutableStateOf(false) }
 
+    val playerFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        try {
+            playerFocusRequester.requestFocus()
+        } catch (_: Exception) {}
+    }
+
     // Intercept back button
     BackHandler {
         if (showChooseEpisodeModal) {
             showChooseEpisodeModal = false
-        } else if (showDownloadDialog) {
-            showDownloadDialog = false
         } else if (isLocked) {
             isLocked = false
         } else {
@@ -665,8 +702,8 @@ fun ShortsReelPlayer(
     }
     var currentAudioTrackId by remember { mutableStateOf("auto") }
 
-    // Auto-hide controls state for Shorts Player
-    var areControlsVisible by remember { mutableStateOf(true) }
+    // Auto-hide controls state for Shorts Player (blocked on TV devices)
+    var areControlsVisible by remember { mutableStateOf(!isTv) }
 
     // Toggle Play/Pause helper
     fun togglePlayPause() {
@@ -674,7 +711,7 @@ fun ShortsReelPlayer(
             exoPlayer.pause()
             isPlaying = false
             showPlayPauseIndicator = true
-            areControlsVisible = true
+            if (!isTv) areControlsVisible = true
         } else {
             if (exoPlayer.playbackState == Player.STATE_ENDED) {
                 exoPlayer.seekTo(0)
@@ -693,17 +730,19 @@ fun ShortsReelPlayer(
         }
     }
 
-    // Auto-hide controls after 3.5 seconds during playback
+    // Auto-hide controls after 3.5 seconds during playback (mobile only)
     LaunchedEffect(areControlsVisible, isPlaying, isSeeking, showSettingsDialog) {
-        if (areControlsVisible && isPlaying && !isSeeking && !showSettingsDialog) {
+        if (!isTv && areControlsVisible && isPlaying && !isSeeking && !showSettingsDialog) {
             delay(3500)
             areControlsVisible = false
         }
     }
 
-    // Always reveal controls briefly on episode swipe
+    // Always reveal controls briefly on episode swipe (mobile only)
     LaunchedEffect(pagerState.currentPage) {
-        areControlsVisible = true
+        if (!isTv) {
+            areControlsVisible = true
+        }
     }
 
     // Function to extract audio tracks from exoPlayer
@@ -759,7 +798,9 @@ fun ShortsReelPlayer(
                     }
                     Player.STATE_READY -> {
                         isBuffering = false
-                        durationMs = if (exoPlayer.duration > 0) exoPlayer.duration else 0L
+                        if (exoPlayer.duration > 0) {
+                            durationMs = exoPlayer.duration
+                        }
                         updateAudioTracks()
                     }
                     Player.STATE_ENDED -> {
@@ -795,6 +836,22 @@ fun ShortsReelPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 isBuffering = false
                 scope.launch {
+                    val curItem = safeList.getOrNull(pagerState.currentPage)
+                    if (curItem != null && (curItem.movie.isStoryTvServer || curItem.movie.source.equals("storytv", ignoreCase = true))) {
+                        val cleanId = curItem.movie.id.filter { it.isDigit() }
+                            .ifBlank { curItem.movie.detailPath.filter { it.isDigit() } }
+                            .ifBlank { curItem.movie.id }
+                        val freshUrl = withContext(Dispatchers.IO) {
+                            com.example.data.api.StoryTvApiClient.fetchEpisodeStream(cleanId, curItem.episode, forceRefresh = true)
+                        }
+                        if (!freshUrl.isNullOrBlank()) {
+                            val newSource = buildShortMediaSource(context, freshUrl, "HLS")
+                            exoPlayer.setMediaSource(newSource)
+                            exoPlayer.prepare()
+                            exoPlayer.play()
+                            return@launch
+                        }
+                    }
                     try {
                         val fallback = buildShortMediaSource(context, FALLBACK_SHORT_STREAM, "MP4")
                         exoPlayer.setMediaSource(fallback)
@@ -815,32 +872,64 @@ fun ShortsReelPlayer(
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             if (!isSeeking) {
-                currentPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-                if (exoPlayer.duration > 0) {
-                    durationMs = exoPlayer.duration
+                val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                currentPositionMs = pos
+                val liveDur = exoPlayer.duration
+                if (liveDur > 0) {
+                    durationMs = liveDur
+                }
+                if (durationMs > 0 && currentPositionMs > durationMs) {
+                    durationMs = currentPositionMs
                 }
             }
             delay(250)
         }
     }
 
-    // Background pre-fetching for next and previous episode
+    // Background pre-fetching for next episodes and previous episode
     LaunchedEffect(pagerState.currentPage, safeList) {
-        val nextIndex = pagerState.currentPage + 1
+        val next1 = pagerState.currentPage + 1
+        val next2 = pagerState.currentPage + 2
+        val next3 = pagerState.currentPage + 3
         val prevIndex = pagerState.currentPage - 1
-        val itemsToPrefetch = listOfNotNull(safeList.getOrNull(nextIndex), safeList.getOrNull(prevIndex))
+        val itemsToPrefetch = listOfNotNull(
+            safeList.getOrNull(next1),
+            safeList.getOrNull(next2),
+            safeList.getOrNull(next3),
+            safeList.getOrNull(prevIndex)
+        )
         itemsToPrefetch.forEach { item ->
             val cacheKey = "${item.movie.id}_${item.season}_${item.episode}"
             if (!streamCache.containsKey(cacheKey)) {
                 launch(Dispatchers.IO) {
                     try {
+                        val isFreeReelsItem = item.movie.isFreeReelsServer || item.movie.source.equals("freereels", ignoreCase = true)
                         val isStoryItem = item.movie.isStoryTvServer || item.movie.source.equals("storytv", ignoreCase = true)
                         val isVskitItem = item.movie.isVskitServer ||
                             item.movie.source.equals("vskit", ignoreCase = true) ||
                             item.movie.uploadBy.equals("ShortsTV", ignoreCase = true) ||
                             item.directStreams.isNotEmpty()
 
-                        if (isStoryItem) {
+                        if (isFreeReelsItem) {
+                            val freeMatch = freeReelsEpisodes.find { it.index == item.episode }
+                            val epUrl = freeMatch?.playableUrl?.ifBlank { null }
+                            if (!epUrl.isNullOrBlank()) {
+                                val fmt = if (epUrl.contains(".m3u8")) "HLS" else "MP4"
+                                val qualities = listOf(
+                                    MovieStream("free_1080", "1080 × 1920", fmt, epUrl),
+                                    MovieStream("free_720", "720 × 1280", fmt, epUrl),
+                                    MovieStream("free_480", "480 × 854", fmt, epUrl),
+                                    MovieStream("free_360", "360 × 640", fmt, epUrl)
+                                )
+                                streamCache[cacheKey] = CachedShortStream(
+                                    streamUrl = epUrl,
+                                    format = fmt,
+                                    streams = qualities,
+                                    qualities = listOf("1080 × 1920", "720 × 1280", "480 × 854", "360 × 640"),
+                                    selectedQuality = "1080 × 1920"
+                                )
+                            }
+                        } else if (isStoryItem) {
                             val cleanSubjId = item.movie.id.filter { it.isDigit() }
                                 .ifBlank { item.movie.detailPath.filter { it.isDigit() } }
                                 .ifBlank { item.movie.id }
@@ -911,11 +1000,14 @@ fun ShortsReelPlayer(
         }
     }
 
-    // Fetch and load stream whenever pager page changes
-    LaunchedEffect(pagerState.currentPage) {
+    // Fetch and load stream whenever pager page changes or episode lists arrive
+    LaunchedEffect(pagerState.currentPage, safeList.size) {
         val currentItem = safeList.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
         isBuffering = true
         isFetchingStream = true
+        currentPositionMs = 0L
+        val freeMatchInitial = freeReelsEpisodes.find { it.index == currentItem.episode }
+        durationMs = if (freeMatchInitial != null && freeMatchInitial.duration > 0) freeMatchInitial.duration * 1000L else 0L
 
         // Direct next/previous episode load: stop & clear previous media immediately
         exoPlayer.stop()
@@ -957,6 +1049,74 @@ fun ShortsReelPlayer(
                 format = cached.format
             }
             isFetchingStream = false
+        } else if (currentItem.movie.isFreeReelsServer || currentItem.movie.source.equals("freereels", ignoreCase = true)) {
+            // FREE REELS DIRECT STREAM & HIGH QUALITY PARSER
+            var rawStreamUrl = ""
+            var freeMatch = freeReelsEpisodes.find { it.index == currentItem.episode }
+            if (freeMatch != null && freeMatch.playableUrl.isNotBlank()) {
+                rawStreamUrl = freeMatch.playableUrl
+                if (freeMatch.duration > 0) {
+                    durationMs = freeMatch.duration * 1000L
+                }
+            }
+            // CRITICAL FIX: Synchronously wait for Episode 1 (or any missing episode) from network before falling back
+            if (rawStreamUrl.isBlank()) {
+                val sId = currentItem.movie.id.ifBlank { currentItem.movie.detailPath }
+                try {
+                    val fetchedList = withContext(Dispatchers.IO) {
+                        com.example.data.api.FreeReelsApiClient.fetchEpisodes(sId)
+                    }
+                    if (fetchedList.isNotEmpty()) {
+                        val sorted = fetchedList.sortedBy { it.index }
+                        freeReelsEpisodes = sorted
+                        freeMatch = sorted.find { it.index == currentItem.episode }
+                        if (freeMatch != null && freeMatch.playableUrl.isNotBlank()) {
+                            rawStreamUrl = freeMatch.playableUrl
+                            if (freeMatch.duration > 0) {
+                                durationMs = freeMatch.duration * 1000L
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            // Only allow directUrl fallback strictly for Episode 1 if index is actually 1
+            if (rawStreamUrl.isBlank() && currentItem.episode == 1 && currentItem.movie.directUrl.isNotBlank()) {
+                rawStreamUrl = currentItem.movie.directUrl
+            }
+            if (rawStreamUrl.isBlank()) {
+                rawStreamUrl = FALLBACK_SHORT_STREAM
+            }
+
+            val fmt = if (rawStreamUrl.contains(".m3u8")) "HLS" else "MP4"
+            val freeQualities = listOf(
+                MovieStream("free_1080", "1080 × 1920", fmt, rawStreamUrl),
+                MovieStream("free_720", "720 × 1280", fmt, rawStreamUrl),
+                MovieStream("free_480", "480 × 854", fmt, rawStreamUrl),
+                MovieStream("free_360", "360 × 640", fmt, rawStreamUrl)
+            )
+            currentEpisodeStreams = freeQualities
+            availableVideoQualities = listOf("1080 × 1920", "720 × 1280", "480 × 854", "360 × 640")
+
+            val bestQuality = "1080 × 1920"
+            val targetQuality = if (userManualQualityOverride != null && availableVideoQualities.contains(userManualQualityOverride)) {
+                userManualQualityOverride!!
+            } else {
+                bestQuality
+            }
+            selectedQuality = targetQuality
+            streamUrl = rawStreamUrl
+            format = fmt
+
+            if (streamUrl.isNotBlank() && streamUrl != FALLBACK_SHORT_STREAM) {
+                streamCache[cacheKey] = CachedShortStream(
+                    streamUrl = streamUrl,
+                    format = format,
+                    streams = freeQualities,
+                    qualities = availableVideoQualities,
+                    selectedQuality = targetQuality
+                )
+            }
+            isFetchingStream = false
         } else if (currentItem.movie.isStoryTvServer || currentItem.movie.source.equals("storytv", ignoreCase = true)) {
             // STORY TV FAST DIRECT STREAM & HIGH QUALITY PARSER
             var rawStreamUrl = currentItem.directStreamUrl
@@ -968,19 +1128,63 @@ fun ShortsReelPlayer(
                 val storyMatch = storyTvEpisodes.find { it.index == currentItem.episode }
                 if (storyMatch != null && storyMatch.url.isNotBlank()) {
                     rawStreamUrl = storyMatch.url
-                } else {
-                    val fetched = com.example.data.api.StoryTvApiClient.fetchEpisodeStream(cleanSubjId, currentItem.episode)
-                    if (!fetched.isNullOrBlank()) {
-                        rawStreamUrl = fetched
-                        storyTvEpisodes = storyTvEpisodes.map { ep ->
-                            if (ep.index == currentItem.episode) ep.copy(url = fetched) else ep
-                        }
+                }
+            }
+
+            // CRITICAL FIX: Direct on-demand batch fetch for current episode if missing (never stuck loading!)
+            if (rawStreamUrl.isBlank()) {
+                val alignedCursor = ((currentItem.episode - 1) / 5) * 5
+                val batch = withContext(Dispatchers.IO) {
+                    com.example.data.api.StoryTvApiClient.fetchEpisodeMetadata(cleanSubjId, cursor = alignedCursor)
+                }
+                if (batch.isNotEmpty()) {
+                    val batchMap = batch.associateBy { it.index }
+                    storyTvEpisodes = storyTvEpisodes.map { ep ->
+                        val m = batchMap[ep.index]
+                        if (m != null && m.url.isNotBlank()) ep.copy(url = m.url) else ep
                     }
+                    rawStreamUrl = batchMap[currentItem.episode]?.url ?: ""
                 }
             }
 
             if (rawStreamUrl.isBlank()) {
-                rawStreamUrl = currentItem.movie.directUrl.ifBlank { FALLBACK_SHORT_STREAM }
+                val fetched = withContext(Dispatchers.IO) {
+                    com.example.data.api.StoryTvApiClient.fetchEpisodeStream(cleanSubjId, currentItem.episode)
+                }
+                if (!fetched.isNullOrBlank()) {
+                    rawStreamUrl = fetched
+                    storyTvEpisodes = storyTvEpisodes.map { ep ->
+                        if (ep.index == currentItem.episode) ep.copy(url = fetched) else ep
+                    }
+                }
+            }
+
+            // Asynchronously prefetch next 2 batches (next 10 episodes) to guarantee seamless autoplay
+            val curBatch = ((currentItem.episode - 1) / 5) * 5
+            scope.launch(Dispatchers.IO) {
+                for (step in 1..2) {
+                    val nextCursor = curBatch + (step * 5)
+                    try {
+                        val nBatch = com.example.data.api.StoryTvApiClient.fetchEpisodeMetadata(cleanSubjId, cursor = nextCursor)
+                        if (nBatch.isNotEmpty()) {
+                            val nMap = nBatch.associateBy { it.index }
+                            withContext(Dispatchers.Main) {
+                                storyTvEpisodes = storyTvEpisodes.map { ep ->
+                                    val m = nMap[ep.index]
+                                    if (m != null && m.url.isNotBlank() && ep.url.isBlank()) ep.copy(url = m.url) else ep
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Only allow directUrl fallback strictly for Episode 1 (never for Episode 2+)
+            if (rawStreamUrl.isBlank() && currentItem.episode == 1) {
+                rawStreamUrl = currentItem.movie.directUrl
+            }
+            if (rawStreamUrl.isBlank()) {
+                rawStreamUrl = FALLBACK_SHORT_STREAM
             }
 
             // Standard Story TV Qualities according to app format (0000 × 0000)
@@ -1180,7 +1384,8 @@ fun ShortsReelPlayer(
                 selectedQuality = highestQualityDisplay
             }
 
-            streamUrl = chosenStream?.url?.ifBlank { null } ?: currentItem.directStreamUrl.ifBlank { null } ?: currentItem.movie.directUrl.ifBlank { null } ?: FALLBACK_SHORT_STREAM
+            val ep1Fallback = if (currentItem.episode == 1) currentItem.movie.directUrl.ifBlank { null } else null
+            streamUrl = chosenStream?.url?.ifBlank { null } ?: currentItem.directStreamUrl.ifBlank { null } ?: ep1Fallback ?: FALLBACK_SHORT_STREAM
             format = chosenStream?.format ?: if (streamUrl.contains(".m3u8")) "HLS" else "MP4"
             if (streamUrl != FALLBACK_SHORT_STREAM) {
                 activePlayingStreamUrl = streamUrl
@@ -1234,6 +1439,67 @@ fun ShortsReelPlayer(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(playerFocusRequester)
+            .focusable()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_CENTER,
+                        KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER,
+                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        KeyEvent.KEYCODE_MEDIA_PLAY,
+                        KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                            togglePlayPause()
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_LEFT,
+                        KeyEvent.KEYCODE_MEDIA_REWIND,
+                        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                            val newPos = (exoPlayer.currentPosition - 10000L).coerceAtLeast(0L)
+                            exoPlayer.seekTo(newPos)
+                            currentPositionMs = newPos
+                            if (!isTv) areControlsVisible = true
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT,
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                        KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                            val maxDur = if (durationMs > 0) durationMs else exoPlayer.duration
+                            val newPos = (exoPlayer.currentPosition + 10000L).coerceAtMost(if (maxDur > 0) maxDur else Long.MAX_VALUE)
+                            exoPlayer.seekTo(newPos)
+                            currentPositionMs = newPos
+                            if (!isTv) areControlsVisible = true
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            scope.launch {
+                                val next = pagerState.currentPage + 1
+                                if (next < safeList.size) {
+                                    pagerState.animateScrollToPage(next)
+                                }
+                            }
+                            if (!isTv) areControlsVisible = true
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            scope.launch {
+                                val prev = pagerState.currentPage - 1
+                                if (prev >= 0) {
+                                    pagerState.animateScrollToPage(prev)
+                                }
+                            }
+                            if (!isTv) areControlsVisible = true
+                            true
+                        }
+                        KeyEvent.KEYCODE_BACK -> {
+                            onClose()
+                            true
+                        }
+                        else -> false
+                    }
+                } else false
+            }
     ) {
         // Vertical Pager for Shorts & Episodes (Manual swipe up / down changes episode/short with reel physics)
         VerticalPager(
@@ -1254,7 +1520,7 @@ fun ShortsReelPlayer(
                         if (!isLocked) {
                             togglePlayPause()
                         } else {
-                            areControlsVisible = !areControlsVisible
+                            if (!isTv) areControlsVisible = !areControlsVisible
                         }
                     }
             ) {
@@ -1321,9 +1587,9 @@ fun ShortsReelPlayer(
                     }
                 }
 
-                // Top Controls Bar (Auto-hides with controls visibility, hidden when locked)
+                // Top Controls Bar (Auto-hides with controls visibility, hidden when locked, blocked on TV)
                 AnimatedVisibility(
-                    visible = areControlsVisible && !isLocked,
+                    visible = !isTv && areControlsVisible && !isLocked,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier
@@ -1355,9 +1621,9 @@ fun ShortsReelPlayer(
                     }
                 }
 
-                // Right Side Vertical Action Bar (Auto-hides with controls visibility, hidden when locked)
+                // Right Side Vertical Action Bar (Auto-hides with controls visibility, hidden when locked, blocked on TV)
                 AnimatedVisibility(
-                    visible = areControlsVisible && !isLocked,
+                    visible = !isTv && areControlsVisible && !isLocked,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier
@@ -1381,23 +1647,6 @@ fun ShortsReelPlayer(
                             Icon(
                                 imageVector = Icons.Default.LockOpen,
                                 contentDescription = "Lock Screen",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-
-                        // Download Episode Button
-                        IconButton(
-                            onClick = {
-                                showDownloadDialog = true
-                            },
-                            modifier = Modifier
-                                .size(42.dp)
-                                .background(Color.Black.copy(alpha = 0.45f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Download Episode",
                                 tint = Color.White,
                                 modifier = Modifier.size(22.dp)
                             )
@@ -1459,9 +1708,9 @@ fun ShortsReelPlayer(
                     }
                 }
 
-                // Floating Unlock Button when Screen is Locked
+                // Floating Unlock Button when Screen is Locked (blocked on TV)
                 AnimatedVisibility(
-                    visible = isLocked && areControlsVisible,
+                    visible = !isTv && isLocked && areControlsVisible,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier
@@ -1487,10 +1736,10 @@ fun ShortsReelPlayer(
                     }
                 }
 
-                // Bottom Dark Gradient Scrim & Content Details (Title, EP, Detail, Seekbar)
+                // Bottom Dark Gradient Scrim & Content Details (Title, EP, Detail, Seekbar) (blocked on TV)
                 // Auto-shows and auto-hides with playback controls, exactly as shown in the screenshot
                 AnimatedVisibility(
-                    visible = areControlsVisible && !isLocked,
+                    visible = !isTv && areControlsVisible && !isLocked,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier
@@ -1558,20 +1807,23 @@ fun ShortsReelPlayer(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Timestamps Row: Left current time, Right total duration
+                            // Timestamps Row: Left current time, Right total duration (Clamped to prevent duration mismatch)
+                            val safeTotalDuration = if (durationMs > 0) durationMs.coerceAtLeast(currentPositionMs) else currentPositionMs
+                            val safePlayPosition = currentPositionMs.coerceAtMost(if (safeTotalDuration > 0) safeTotalDuration else Long.MAX_VALUE)
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = formatShortTime(currentPositionMs),
+                                    text = formatShortTime(safePlayPosition),
                                     color = Color.White.copy(alpha = 0.95f),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
                                 )
                                 Text(
-                                    text = formatShortTime(durationMs),
+                                    text = formatShortTime(safeTotalDuration),
                                     color = Color.White.copy(alpha = 0.95f),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
@@ -1580,8 +1832,8 @@ fun ShortsReelPlayer(
 
                             // Normal Sleek Seekbar
                             NormalPlayerSeekBar(
-                                currentPositionMs = currentPositionMs,
-                                durationMs = durationMs,
+                                currentPositionMs = safePlayPosition,
+                                durationMs = safeTotalDuration,
                                 onSeekTo = { targetMs ->
                                     exoPlayer.seekTo(targetMs)
                                     currentPositionMs = targetMs
@@ -1745,122 +1997,6 @@ fun ShortsReelPlayer(
                     }
                 }
             )
-        }
-
-        // DOWNLOAD QUALITY CHOOSE MODAL DIALOG
-        if (showDownloadDialog) {
-            val currentItem = safeList.getOrNull(pagerState.currentPage)
-            if (currentItem != null) {
-                val vskitItem = vskitEpisodes.find { it.ep == currentItem.episode }
-                val resolvedStreamUrl = activePlayingStreamUrl.ifBlank {
-                    currentItem.directStreamUrl.ifBlank {
-                        vskitItem?.videoUrl ?: ""
-                    }
-                }
-                val streamsForDownload = if (currentEpisodeStreams.isNotEmpty()) {
-                    currentEpisodeStreams
-                } else if (resolvedStreamUrl.isNotBlank()) {
-                    listOf(
-                        MovieStream(
-                            id = "shorts_${currentItem.episode}_720",
-                            url = resolvedStreamUrl,
-                            resolution = "720p",
-                            format = "mp4",
-                            size = 15000000L
-                        ),
-                        MovieStream(
-                            id = "shorts_${currentItem.episode}_480",
-                            url = resolvedStreamUrl,
-                            resolution = "480p",
-                            format = "mp4",
-                            size = 9000000L
-                        )
-                    )
-                } else {
-                    emptyList()
-                }
-
-                val shortsSeasons = remember(detailedInfo, selectedSeason) {
-                    val sList = detailedInfo?.seasons?.map { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
-                    if (sList.isNotEmpty()) sList else listOf(if (selectedSeason > 0) selectedSeason else 1)
-                }
-                val shortsSeasonEpisodesMap = remember(shortsSeasons, safeList, detailedInfo) {
-                    val seasons = detailedInfo?.seasons ?: emptyList()
-                    shortsSeasons.associateWith { sNum ->
-                        val maxEp = seasons.find { it.seasonNumber == sNum }?.maxEp
-                            ?: safeList.size.coerceAtLeast(1)
-                        (1..maxEp).toList()
-                    }
-                }
-
-                DownloadQualityDialog(
-                    show = showDownloadDialog,
-                    movieTitle = "${currentItem.title} - Ep ${currentItem.episode}",
-                    currentDubLabel = "Original",
-                    availableStreams = streamsForDownload,
-                    isSeriesOrShorts = true,
-                    availableSeasons = shortsSeasons,
-                    seasonEpisodesMap = shortsSeasonEpisodesMap,
-                    currentSeason = currentItem.season,
-                    currentEpisode = currentItem.episode,
-                    onDismissRequest = { showDownloadDialog = false },
-                    onDownloadConfirmed = { quality, url ->
-                        val finalUrl = url.ifBlank {
-                            resolvedStreamUrl.ifBlank {
-                                currentEpisodeStreams.firstOrNull()?.url ?: currentItem.movie.directUrl
-                            }
-                        }
-                        val downloadManager = MovieDownloadManager.getInstance(context)
-                        downloadManager.startDownload(
-                            movie = currentItem.movie.copy(
-                                title = "${currentItem.title} Ep ${currentItem.episode}"
-                            ),
-                            quality = quality,
-                            downloadUrl = finalUrl,
-                            dubLabel = "Original",
-                            seasonNumber = currentItem.season,
-                            episodeNumber = currentItem.episode,
-                            isSeries = true
-                        )
-                        Toast.makeText(
-                            context,
-                            "Download started: Ep ${currentItem.episode} ($quality)",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        showDownloadDialog = false
-                    },
-                    onBatchDownloadConfirmed = { quality, url, selectedEps ->
-                        val downloadManager = MovieDownloadManager.getInstance(context)
-                        selectedEps.forEach { (sNum, epNum) ->
-                            val reelEp = safeList.find { it.episode == epNum }
-                            val epUrl = if (sNum == currentItem.season && epNum == currentItem.episode) {
-                                url.ifBlank { resolvedStreamUrl.ifBlank { reelEp?.directStreamUrl ?: "" } }
-                            } else {
-                                reelEp?.directStreamUrl ?: ""
-                            }
-                            downloadManager.startDownload(
-                                movie = currentItem.movie.copy(
-                                    title = "${currentItem.title} Ep $epNum"
-                                ),
-                                quality = quality,
-                                downloadUrl = epUrl,
-                                dubLabel = "Original",
-                                seasonNumber = sNum,
-                                episodeNumber = epNum,
-                                isSeries = true
-                            )
-                        }
-                        val msg = if (selectedEps.size > 1) {
-                            "Downloading ${selectedEps.size} episodes ($quality)"
-                        } else {
-                            val first = selectedEps.firstOrNull()?.second ?: currentItem.episode
-                            "Download started: Ep $first ($quality)"
-                        }
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        showDownloadDialog = false
-                    }
-                )
-            }
         }
 
         // CHOOSE EPISODE BOTTOM SHEET MODAL (Grid type)
