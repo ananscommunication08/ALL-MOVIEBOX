@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,24 +67,12 @@ fun MediaItemCard(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Bottom subtle gradient shadow
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)),
-                            startY = 100f
-                        )
-                    )
-            )
-
-            // Type Badge (ALBUM, PLAYLIST, SONG, etc.)
-            val badgeText = when (item.type) {
-                MediaType.ALBUM -> "ALBUM"
-                MediaType.PLAYLIST -> "PLAYLIST"
-                MediaType.ARTIST -> "ARTIST"
-                MediaType.SONG -> "SONG"
+            // Type Icon Badge (SONG, ALBUM, PLAYLIST, ARTIST)
+            val badgeIcon = when (item.type) {
+                MediaType.ALBUM -> Icons.Default.Album
+                MediaType.PLAYLIST -> Icons.Default.QueueMusic
+                MediaType.ARTIST -> Icons.Default.Person
+                MediaType.SONG -> Icons.Default.MusicNote
             }
             val badgeColor = when (item.type) {
                 MediaType.ALBUM -> Color(0xFF8B5CF6)     // Purple
@@ -92,38 +84,18 @@ fun MediaItemCard(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(badgeColor.copy(alpha = 0.85f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(badgeColor.copy(alpha = 0.9f))
+                    .padding(5.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = badgeText,
-                    color = Color.White,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold
+                Icon(
+                    imageVector = badgeIcon,
+                    contentDescription = item.type.name,
+                    tint = Color.White,
+                    modifier = Modifier.size(13.dp)
                 )
-            }
-
-            // Play icon overlay for Songs
-            if (item.type == MediaType.SONG) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(SaavnTeal)
-                        .padding(4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play",
-                        tint = Color.Black,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
         }
 

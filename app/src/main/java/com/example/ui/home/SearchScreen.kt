@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,12 +49,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
@@ -94,7 +100,17 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
 
-    LaunchedEffect(gridState, searchResults.size) {
+    var activeFilter by remember { mutableStateOf("All") }
+    val filteredResults = remember(searchResults, activeFilter) {
+        when (activeFilter) {
+            "Movies" -> searchResults.filter { !it.isSeries && !it.isShort && it.subjectType != 7 }
+            "Series" -> searchResults.filter { it.isSeries }
+            "Shorts" -> searchResults.filter { it.isShort || it.subjectType == 7 }
+            else -> searchResults
+        }
+    }
+
+    LaunchedEffect(gridState, filteredResults.size) {
         snapshotFlow {
             val layoutInfo = gridState.layoutInfo
             val totalItems = layoutInfo.totalItemsCount
@@ -234,6 +250,24 @@ fun SearchScreen(
                                 )
                             }
                         }
+                    }
+                }
+
+                // Category filter chips (Remote D-pad focusable for TV & touch for mobile)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 2.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val filterOptions = listOf("All", "Movies", "Series", "Shorts")
+                    filterOptions.forEach { filterText ->
+                        SearchFilterChip(
+                            text = filterText,
+                            isSelected = activeFilter == filterText,
+                            onClick = { activeFilter = filterText }
+                        )
                     }
                 }
 
@@ -395,7 +429,7 @@ fun SearchScreen(
                                     Spacer(modifier = Modifier.width(6.dp))
                                 }
                                 Text(
-                                    text = if (isMovieBoxSearchAutoLoading) "${searchResults.size} loaded (fetching all...)" else "${searchResults.size} found",
+                                    text = if (isMovieBoxSearchAutoLoading) "${filteredResults.size} loaded (fetching all...)" else "${filteredResults.size} found",
                                     color = if (isMovieBoxSearchAutoLoading) MovieBoxRed else Color(0xFFA1A1AA),
                                     fontSize = 12.sp,
                                     fontWeight = if (isMovieBoxSearchAutoLoading) FontWeight.Medium else FontWeight.Normal
@@ -412,7 +446,7 @@ fun SearchScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            itemsIndexed(searchResults, key = { index, item ->
+                            itemsIndexed(filteredResults, key = { index, item ->
                                 if (item.id.isNotBlank()) "${item.id}_$index" else "${item.title}_$index"
                             }) { _, movie ->
                                 MovieCard(
@@ -478,5 +512,34 @@ fun SearchScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SearchFilterChip(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = if (isSelected) MovieBoxRed else (if (isFocused) Color.White else DarkSurfaceVariant),
+        border = BorderStroke(
+            width = if (isFocused) 2.5.dp else 1.dp,
+            color = if (isFocused) Color.White else (if (isSelected) MovieBoxRed else DarkSurfaceBorder)
+        ),
+        modifier = Modifier
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick)
+    ) {
+        Text(
+            text = text,
+            color = if (isFocused && !isSelected) Color.Black else Color.White,
+            fontSize = 12.5.sp,
+            fontWeight = if (isSelected || isFocused) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+        )
     }
 }

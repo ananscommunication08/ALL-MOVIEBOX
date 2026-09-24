@@ -289,6 +289,7 @@ object JioSaavnApiClient {
             obj.optString("encrypted_media_url", "")
 
         val hasLyrics = (moreInfo?.optString("has_lyrics") ?: obj.optString("has_lyrics", "false")) == "true"
+        val lyricsId = moreInfo?.optString("lyrics_id") ?: obj.optString("lyrics_id", "")
         val copyright = cleanText(moreInfo?.optString("copyright_text") ?: obj.optString("copyright_text", ""))
         val releaseDate = moreInfo?.optString("release_date") ?: obj.optString("release_date", "")
         val year = obj.optString("year", "")
@@ -306,6 +307,7 @@ object JioSaavnApiClient {
             image = image,
             encryptedMediaUrl = encryptedMediaUrl,
             hasLyrics = hasLyrics,
+            lyricsId = lyricsId,
             copyright = copyright,
             releaseDate = releaseDate,
             year = year,
@@ -417,21 +419,41 @@ object JioSaavnApiClient {
      */
     suspend fun fetchHomeFeed(): SaavnHomeData = withContext(Dispatchers.IO) {
         try {
+            val editorialDeferred = async {
+                fetchJsonObject("__call=webapi.get&type=editorial&p=1&n=30")
+            }
             val trendingDeferred = async {
                 fetchJsonArray("__call=content.getTrending")
             }
             val chartsDeferred = async {
                 fetchJsonArray("__call=content.getCharts")
             }
+            val chartsObjDeferred = async {
+                fetchJsonObject("__call=content.getCharts")
+            }
+            val extraTopChartsDeferred = async {
+                searchPlaylists("Top 50", page = 1, limit = 25)
+            }
+            val extraTrendingChartsDeferred = async {
+                searchPlaylists("Trending", page = 1, limit = 20)
+            }
+            val extraChartsDeferred = async {
+                searchPlaylists("Charts", page = 1, limit = 20)
+            }
             val playlistsDeferred = async {
-                fetchJsonArray("__call=content.getFeaturedPlaylists&p=1&n=20")
+                fetchJsonArray("__call=content.getFeaturedPlaylists&p=1&n=30")
             }
             val albumsDeferred = async {
-                fetchJsonArray("__call=content.getAlbums&p=1&n=20")
+                fetchJsonArray("__call=content.getAlbums&p=1&n=30")
             }
 
+            val editorialObj = editorialDeferred.await()
             val trendingArray = trendingDeferred.await()
             val chartsArray = chartsDeferred.await()
+            val chartsObj = chartsObjDeferred.await()
+            val extraTopCharts = extraTopChartsDeferred.await()
+            val extraTrendingCharts = extraTrendingChartsDeferred.await()
+            val extraCharts = extraChartsDeferred.await()
             val playlistsArray = playlistsDeferred.await()
             val albumsArray = albumsDeferred.await()
 
@@ -441,14 +463,16 @@ object JioSaavnApiClient {
             val featuredPlaylists = mutableListOf<MediaItem>()
             val newReleases = mutableListOf<MediaItem>()
 
-            if (trendingArray != null) {
-                for (i in 0 until trendingArray.length()) {
-                    val obj = trendingArray.optJSONObject(i) ?: continue
-                    val item = parseMediaItem(obj)
-                    if (item.title.isNotBlank()) {
-                        trendingItems.add(item)
+            fun addMediaItems(arr: JSONArray?, targetList: MutableList<MediaItem>, defaultType: MediaType? = null) {
+                if (arr == null) return
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val rawItem = parseMediaItem(obj)
+                    val item = if (defaultType != null && rawItem.type == MediaType.SONG) rawItem.copy(type = defaultType) else rawItem
+                    if (item.title.isNotBlank() && targetList.none { it.id == item.id }) {
+                        targetList.add(item)
                     }
-                    if (item.type == MediaType.SONG || obj.has("more_info")) {
+                    if (chartToppers.size < 25 && (item.type == MediaType.SONG || obj.has("more_info"))) {
                         val songItem = parseSongObject(obj)
                         if (songItem.title.isNotBlank() && chartToppers.none { it.id == songItem.id }) {
                             chartToppers.add(songItem)
@@ -457,39 +481,39 @@ object JioSaavnApiClient {
                 }
             }
 
-            if (chartsArray != null) {
-                for (i in 0 until chartsArray.length()) {
-                    val obj = chartsArray.optJSONObject(i) ?: continue
-                    val item = parseMediaItem(obj).copy(type = MediaType.PLAYLIST)
-                    if (item.title.isNotBlank()) {
-                        topCharts.add(item)
-                    }
-                }
+            // 1. Process Editorial Feed first (Guaranteed comprehensive and rich starting cards)
+            if (editorialObj != null) {
+                addMediaItems(extractArrayFromField(editorialObj, "new_trending"), trendingItems)
+                addMediaItems(extractArrayFromField(editorialObj, "new_albums"), newReleases, defaultType = MediaType.ALBUM)
+                addMediaItems(extractArrayFromField(editorialObj, "top_playlists"), featuredPlaylists, defaultType = MediaType.PLAYLIST)
+                addMediaItems(extractArrayFromField(editorialObj, "charts"), topCharts, defaultType = MediaType.PLAYLIST)
+                addMediaItems(extractArrayFromField(editorialObj, "top_charts"), topCharts, defaultType = MediaType.PLAYLIST)
             }
 
-            if (playlistsArray != null) {
-                for (i in 0 until playlistsArray.length()) {
-                    val obj = playlistsArray.optJSONObject(i) ?: continue
-                    val item = parseMediaItem(obj).copy(type = MediaType.PLAYLIST)
-                    if (item.title.isNotBlank()) {
-                        featuredPlaylists.add(item)
-                    }
-                }
+            // 2. Supplement with specific content endpoints without duplicates
+            addMediaItems(trendingArray, trendingItems)
+            addMediaItems(albumsArray, newReleases, defaultType = MediaType.ALBUM)
+            addMediaItems(playlistsArray, featuredPlaylists, defaultType = MediaType.PLAYLIST)
+            addMediaItems(chartsArray, topCharts, defaultType = MediaType.PLAYLIST)
+            if (chartsObj != null) {
+                addMediaItems(extractArrayFromField(chartsObj, "charts"), topCharts, defaultType = MediaType.PLAYLIST)
+                addMediaItems(extractArrayFromField(chartsObj, "data"), topCharts, defaultType = MediaType.PLAYLIST)
             }
 
-            if (albumsArray != null) {
-                for (i in 0 until albumsArray.length()) {
-                    val obj = albumsArray.optJSONObject(i) ?: continue
-                    val mediaItem = parseMediaItem(obj)
-                    if (mediaItem.title.isNotBlank()) {
-                        newReleases.add(mediaItem)
-                    }
-                    if (chartToppers.size < 18 && (mediaItem.type == MediaType.SONG || obj.has("more_info"))) {
-                        val songItem = parseSongObject(obj)
-                        if (songItem.title.isNotBlank() && chartToppers.none { it.id == songItem.id }) {
-                            chartToppers.add(songItem)
-                        }
-                    }
+            // 3. Ensure Top Charts row has ALL cards by merging top chart playlists
+            for (p in extraTopCharts + extraTrendingCharts + extraCharts) {
+                if (topCharts.none { it.id == p.id || it.title.equals(p.title, ignoreCase = true) }) {
+                    topCharts.add(
+                        MediaItem(
+                            id = p.id,
+                            title = p.title,
+                            subtitle = p.subtitle.ifBlank { "Top Chart" },
+                            imageUrl = p.image,
+                            type = MediaType.PLAYLIST,
+                            songCount = p.songCount,
+                            followerCount = p.followerCount
+                        )
+                    )
                 }
             }
 
@@ -519,6 +543,46 @@ object JioSaavnApiClient {
         return this
     }
 
+    private fun extractArrayFromField(root: JSONObject, field: String): JSONArray? {
+        val direct = root.optJSONArray(field)
+        if (direct != null && direct.length() > 0) return direct
+        val modules = root.optJSONObject("modules")
+        val inModules = modules?.optJSONArray(field)
+        if (inModules != null && inModules.length() > 0) return inModules
+        val moduleObj = modules?.optJSONObject(field)
+        if (moduleObj != null) {
+            val modArr = moduleObj.optJSONArray("data")
+                ?: moduleObj.optJSONArray("list")
+                ?: moduleObj.optJSONArray("results")
+                ?: moduleObj.optJSONArray("items")
+            if (modArr != null && modArr.length() > 0) return modArr
+        }
+        val obj = root.optJSONObject(field)
+        if (obj != null) {
+            return obj.optJSONArray("data")
+                ?: obj.optJSONArray("list")
+                ?: obj.optJSONArray("results")
+                ?: obj.optJSONArray("items")
+                ?: obj.optJSONArray("charts")
+        }
+        return null
+    }
+
+    private fun fetchJsonObject(callQuery: String): JSONObject? {
+        val body = executeWithFailover(callQuery) ?: return null
+        return try {
+            val trimmed = body.trim()
+            if (trimmed.startsWith("{")) {
+                JSONObject(trimmed)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing json object from $callQuery", e)
+            null
+        }
+    }
+
     private fun fetchJsonArray(callQuery: String): JSONArray? {
         val body = executeWithFailover(callQuery) ?: return null
         return try {
@@ -527,7 +591,14 @@ object JioSaavnApiClient {
                 JSONArray(trimmed)
             } else if (trimmed.startsWith("{")) {
                 val root = JSONObject(trimmed)
-                root.optJSONArray("data") ?: root.optJSONArray("results") ?: root.optJSONArray("list")
+                root.optJSONArray("data")
+                    ?: root.optJSONArray("results")
+                    ?: root.optJSONArray("list")
+                    ?: root.optJSONArray("new_albums")
+                    ?: root.optJSONArray("albums")
+                    ?: root.optJSONArray("new_trending")
+                    ?: root.optJSONArray("top_playlists")
+                    ?: root.optJSONArray("charts")
             } else {
                 null
             }
@@ -724,26 +795,74 @@ object JioSaavnApiClient {
      * 3. LRCLIB global free lyrics database
      * 4. Lyrics.ovh open fallback
      */
-    suspend fun getLyrics(songId: String, title: String = "", artist: String = ""): String? = withContext(Dispatchers.IO) {
-        // Source 1: Direct JioSaavn official API call with strict parameters
-        try {
-            val officialUrl = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&lyrics_id=$songId&ctx=web6dot0&_format=json&_marker=0&api_version=4"
-            val response = httpClient.newCall(buildRequest(officialUrl)).execute()
-            val body = response.body?.string()
-            if (response.isSuccessful && !body.isNullOrBlank()) {
-                val root = JSONObject(body)
-                val rawLyrics = root.optString("lyrics", "")
-                if (rawLyrics.isNotBlank() && !rawLyrics.equals("null", ignoreCase = true)) {
-                    val formatted = formatLyrics(rawLyrics)
-                    if (formatted.isNotBlank()) return@withContext formatted
+    suspend fun getLyrics(
+        songId: String,
+        lyricsId: String = "",
+        title: String = "",
+        artist: String = ""
+    ): String? = withContext(Dispatchers.IO) {
+        // Source 1: Direct JioSaavn official API call with explicit lyrics_id or songId
+        val candidates = listOfNotNull(
+            lyricsId.takeIf { it.isNotBlank() },
+            songId.takeIf { it.isNotBlank() }
+        ).distinct()
+
+        for (candId in candidates) {
+            try {
+                val officialUrl = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&lyrics_id=$candId&ctx=web6dot0&_format=json&_marker=0&api_version=4"
+                val response = httpClient.newCall(buildRequest(officialUrl)).execute()
+                val body = response.body?.string()
+                if (response.isSuccessful && !body.isNullOrBlank()) {
+                    val root = JSONObject(body)
+                    val rawLyrics = root.optString("lyrics", "")
+                    if (rawLyrics.isNotBlank() && !rawLyrics.equals("null", ignoreCase = true)) {
+                        val formatted = formatLyrics(rawLyrics)
+                        if (formatted.isNotBlank()) return@withContext formatted
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Official lyrics endpoint failed for $candId: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Official lyrics endpoint failed for $songId: ${e.message}")
+        }
+
+        // Source 1b: Fetch song details from JioSaavn to get accurate lyrics_id or lyrics snippet
+        if (songId.isNotBlank()) {
+            try {
+                val detailsUrl = "https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=$songId&ctx=web6dot0&_format=json"
+                val response = httpClient.newCall(buildRequest(detailsUrl)).execute()
+                val body = response.body?.string()
+                if (response.isSuccessful && !body.isNullOrBlank()) {
+                    val root = JSONObject(body)
+                    val songObj = root.optJSONObject(songId)
+                    val moreInfo = songObj?.optJSONObject("more_info")
+                    val fetchedLyricsId = moreInfo?.optString("lyrics_id", "") ?: ""
+                    val snippet = moreInfo?.optString("lyrics_snippet", "") ?: ""
+                    if (fetchedLyricsId.isNotBlank() && fetchedLyricsId != songId) {
+                        val lyrUrl = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&lyrics_id=$fetchedLyricsId&ctx=web6dot0&_format=json&_marker=0&api_version=4"
+                        val lyrResp = httpClient.newCall(buildRequest(lyrUrl)).execute()
+                        val lyrBody = lyrResp.body?.string()
+                        if (lyrResp.isSuccessful && !lyrBody.isNullOrBlank()) {
+                            val lyrRoot = JSONObject(lyrBody)
+                            val rawLyrics = lyrRoot.optString("lyrics", "")
+                            if (rawLyrics.isNotBlank() && !rawLyrics.equals("null", ignoreCase = true)) {
+                                val formatted = formatLyrics(rawLyrics)
+                                if (formatted.isNotBlank()) return@withContext formatted
+                            }
+                        }
+                    }
+                    if (snippet.isNotBlank()) {
+                        val formatted = formatLyrics(snippet)
+                        if (formatted.isNotBlank()) return@withContext formatted
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "song.getDetails failed for $songId: ${e.message}")
+            }
         }
 
         // Source 2: JioSaavn Mirror endpoints
         val mirrorEndpoints = listOf(
+            "https://saavn.dev/api/songs/$songId/lyrics",
             "https://saavn.dev/api/lyrics?id=$songId",
             "https://saavn.me/lyrics?id=$songId"
         )

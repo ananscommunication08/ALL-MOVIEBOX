@@ -323,15 +323,16 @@ fun HomeScreen(
                 )
             }
         }
-
-        // Mini Music Player (Persistent Floating Bar across the entire app whenever playing)
-        MiniMusicPlayer(
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
-
-        // Full Screen Music Player Overlay (Available across all screens)
-        FullScreenMusicPlayer()
     }
+
+    // Mini Music Player (Persistent Floating Bar across the entire app whenever playing)
+    MiniMusicPlayer(
+        modifier = Modifier.align(Alignment.BottomCenter)
+    )
+
+    // Full Screen Music Player Overlay (Available across all screens)
+    FullScreenMusicPlayer()
+}
 
     // Network Stream Dialog
     if (showNetworkStreamDialog) {

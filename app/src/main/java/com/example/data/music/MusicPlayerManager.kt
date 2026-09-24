@@ -348,6 +348,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
             val lyrics = withContext(Dispatchers.IO) {
                 JioSaavnApiClient.getLyrics(
                     songId = song.id,
+                    lyricsId = song.lyricsId,
                     title = song.title,
                     artist = song.artist.ifBlank { song.subtitle }
                 )

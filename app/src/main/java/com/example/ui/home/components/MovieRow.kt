@@ -2,8 +2,10 @@ package com.example.ui.home.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -34,11 +36,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -169,9 +174,10 @@ fun MovieCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    var isFocused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1f,
-        animationSpec = tween(durationMillis = 150),
+        targetValue = if (isFocused) 1.05f else (if (isPressed) 0.96f else 1f),
+        animationSpec = tween(durationMillis = 120),
         label = "card_scale"
     )
 
@@ -194,6 +200,8 @@ fun MovieCard(
     Column(
         modifier = baseModifier
             .scale(scale)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -201,12 +209,12 @@ fun MovieCard(
             )
             .testTag("movie_card_${movie.id}")
     ) {
-        // Poster Card with 5px border radius, NO border & NO border color
+        // Poster Card with border when focused for TV remote navigation
         Card(
-            shape = RoundedCornerShape(5.dp),
+            shape = RoundedCornerShape(8.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = null,
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isFocused) 8.dp else 0.dp),
+            border = if (isFocused) BorderStroke(3.dp, Color.White) else null,
             modifier = if (useFixedDimension) {
                 Modifier
                     .fillMaxWidth()

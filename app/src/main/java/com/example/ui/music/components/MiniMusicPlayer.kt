@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -127,12 +128,12 @@ fun MiniMusicPlayer(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Album Art
+                    // Album Art (Circular Vinyl Disk)
                     Box(
                         modifier = Modifier
                             .size(46.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Black.copy(alpha = 0.4f)),
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center
                     ) {
                         AsyncImage(
@@ -143,9 +144,16 @@ fun MiniMusicPlayer(
                             contentDescription = song.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(46.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .fillMaxSize()
+                                .clip(CircleShape)
                                 .then(if (isPlaying) Modifier.rotate(rotation) else Modifier)
+                        )
+                        // Vinyl Center Spindle Dot
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.85f))
                         )
                     }
 

@@ -60,6 +60,7 @@ data class SaavnSongItem(
     val image: String = "",
     val encryptedMediaUrl: String = "",
     val hasLyrics: Boolean = false,
+    val lyricsId: String = "",
     val copyright: String = "",
     val releaseDate: String = "",
     val year: String = "",

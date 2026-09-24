@@ -128,10 +128,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadData()
-        loadShortsTvData()
-        loadLookrFeed()
-        loadStoryTvFeed()
-        loadFreeReelsFeed()
     }
 
     private fun loadData() {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -89,6 +90,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceBorder
 import com.example.ui.theme.DarkSurfaceVariant
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 private val SaavnTeal = Color(0xFF2BC5B4)
@@ -185,9 +187,14 @@ fun JioSaavnSearchScreen(
                     searchArtistResults = JioSaavnApiClient.searchArtists(query, page = 1, limit = 20)
                 }
                 else -> {
-                    searchSongResults = JioSaavnApiClient.searchSongs(query, page = 1, limit = 25)
-                    searchAlbumResults = JioSaavnApiClient.searchAlbums(query, page = 1, limit = 10)
-                    searchPlaylistResults = JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 10)
+                    val songsDef = async { JioSaavnApiClient.searchSongs(query, page = 1, limit = 30) }
+                    val albumsDef = async { JioSaavnApiClient.searchAlbums(query, page = 1, limit = 15) }
+                    val playlistsDef = async { JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 15) }
+                    val artistsDef = async { JioSaavnApiClient.searchArtists(query, page = 1, limit = 15) }
+                    searchSongResults = songsDef.await()
+                    searchAlbumResults = albumsDef.await()
+                    searchPlaylistResults = playlistsDef.await()
+                    searchArtistResults = artistsDef.await()
                 }
             }
             isSearching = false
@@ -582,7 +589,7 @@ fun JioSaavnSearchScreen(
                                     }
                                 }
                             }
-                            else -> {
+                            "Songs" -> {
                                 if (searchSongResults.isEmpty()) {
                                     item { SearchNoResultsView(query = searchQuery) }
                                 } else {
@@ -612,9 +619,7 @@ fun JioSaavnSearchScreen(
                                                 textAlign = TextAlign.Center,
                                                 modifier = Modifier.width(28.dp)
                                             )
-
-                                            Spacer(modifier = Modifier.width(8.dp))
-
+                                            Spacer(modifier = Modifier.width(10.dp))
                                             AsyncImage(
                                                 model = song.image,
                                                 contentDescription = cleanSongTitle,
@@ -623,14 +628,12 @@ fun JioSaavnSearchScreen(
                                                     .clip(RoundedCornerShape(8.dp)),
                                                 contentScale = ContentScale.Crop
                                             )
-
                                             Spacer(modifier = Modifier.width(12.dp))
-
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = cleanSongTitle,
                                                     color = if (isCurrent) SearchTeal else Color.White,
-                                                    fontSize = 14.5.sp,
+                                                    fontSize = 15.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -643,29 +646,291 @@ fun JioSaavnSearchScreen(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                             }
-
-                                            IconButton(
-                                                onClick = { playerManager.toggleFavorite(song.id) },
-                                                modifier = Modifier.size(34.dp)
-                                            ) {
+                                            IconButton(onClick = { playerManager.toggleFavorite(song.id) }) {
                                                 Icon(
                                                     imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                                     contentDescription = "Favorite",
-                                                    tint = if (isFav) Color(0xFFEF4444) else SearchTextMuted.copy(alpha = 0.7f),
+                                                    tint = if (isFav) Color(0xFFFF2A55) else SearchTextMuted,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }
-
-                                            IconButton(
-                                                onClick = { selectedSongOptions = song },
-                                                modifier = Modifier.size(34.dp)
-                                            ) {
+                                            IconButton(onClick = { selectedSongOptions = song }) {
                                                 Icon(
                                                     imageVector = Icons.Default.MoreVert,
-                                                    contentDescription = "More",
-                                                    tint = SearchTextMuted.copy(alpha = 0.7f),
+                                                    contentDescription = "Options",
+                                                    tint = SearchTextMuted,
                                                     modifier = Modifier.size(20.dp)
                                                 )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            else -> {
+                                val hasAnyResults = searchArtistResults.isNotEmpty() ||
+                                        searchAlbumResults.isNotEmpty() ||
+                                        searchPlaylistResults.isNotEmpty() ||
+                                        searchSongResults.isNotEmpty()
+
+                                if (!hasAnyResults) {
+                                    item { SearchNoResultsView(query = searchQuery) }
+                                } else {
+                                    // 1ST ROW: ARTISTS (Circular avatars)
+                                    if (searchArtistResults.isNotEmpty()) {
+                                        item {
+                                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                                                Text(
+                                                    text = "Artists",
+                                                    color = Color.White,
+                                                    fontSize = 17.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(bottom = 10.dp)
+                                                )
+                                                LazyRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                                    contentPadding = PaddingValues(horizontal = 2.dp)
+                                                ) {
+                                                    items(searchArtistResults) { artist ->
+                                                        val cleanArtistName = artist.name.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim().ifBlank { "Artist" }
+                                                        Column(
+                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                            modifier = Modifier
+                                                                .width(76.dp)
+                                                                .clickable {
+                                                                    searchQuery = cleanArtistName
+                                                                    selectedFilter = "Songs"
+                                                                    executeSearch(cleanArtistName, "Songs")
+                                                                }
+                                                        ) {
+                                                            AsyncImage(
+                                                                model = artist.image,
+                                                                contentDescription = cleanArtistName,
+                                                                modifier = Modifier
+                                                                    .size(68.dp)
+                                                                    .clip(CircleShape)
+                                                                    .border(1.5.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                            Spacer(modifier = Modifier.height(6.dp))
+                                                            Text(
+                                                                text = cleanArtistName,
+                                                                color = Color.White,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Medium,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                textAlign = TextAlign.Center
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 2ND ROW: ALBUMS
+                                    if (searchAlbumResults.isNotEmpty()) {
+                                        item {
+                                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                                                Text(
+                                                    text = "Albums",
+                                                    color = Color.White,
+                                                    fontSize = 17.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(bottom = 10.dp)
+                                                )
+                                                LazyRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                                    contentPadding = PaddingValues(horizontal = 2.dp)
+                                                ) {
+                                                    items(searchAlbumResults) { album ->
+                                                        val cleanAlbumTitle = album.title.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim().ifBlank { "Album" }
+                                                        val cleanAlbumSub = album.year.ifBlank { album.subtitle }.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim()
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .width(115.dp)
+                                                                .clickable { openAlbum(album) }
+                                                        ) {
+                                                            AsyncImage(
+                                                                model = album.image,
+                                                                contentDescription = cleanAlbumTitle,
+                                                                modifier = Modifier
+                                                                    .size(115.dp)
+                                                                    .clip(RoundedCornerShape(10.dp)),
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                            Spacer(modifier = Modifier.height(6.dp))
+                                                            Text(
+                                                                text = cleanAlbumTitle,
+                                                                color = Color.White,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            if (cleanAlbumSub.isNotBlank()) {
+                                                                Text(
+                                                                    text = cleanAlbumSub,
+                                                                    color = SearchTextMuted,
+                                                                    fontSize = 11.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 3RD ROW: PLAYLISTS
+                                    if (searchPlaylistResults.isNotEmpty()) {
+                                        item {
+                                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                                                Text(
+                                                    text = "Playlists",
+                                                    color = Color.White,
+                                                    fontSize = 17.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(bottom = 10.dp)
+                                                )
+                                                LazyRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                                    contentPadding = PaddingValues(horizontal = 2.dp)
+                                                ) {
+                                                    items(searchPlaylistResults) { playlist ->
+                                                        val cleanPlaylistTitle = playlist.title.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim().ifBlank { "Playlist" }
+                                                        val playlistSub = if (playlist.songCount > 0) "${playlist.songCount} Songs" else "Playlist"
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .width(115.dp)
+                                                                .clickable { openPlaylist(playlist) }
+                                                        ) {
+                                                            AsyncImage(
+                                                                model = playlist.image,
+                                                                contentDescription = cleanPlaylistTitle,
+                                                                modifier = Modifier
+                                                                    .size(115.dp)
+                                                                    .clip(RoundedCornerShape(10.dp)),
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                            Spacer(modifier = Modifier.height(6.dp))
+                                                            Text(
+                                                                text = cleanPlaylistTitle,
+                                                                color = Color.White,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Text(
+                                                                text = playlistSub,
+                                                                color = SearchTextMuted,
+                                                                fontSize = 11.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // SONGS LIST (Below the rows)
+                                    if (searchSongResults.isNotEmpty()) {
+                                        item {
+                                            Text(
+                                                text = "Songs",
+                                                color = Color.White,
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                                            )
+                                        }
+
+                                        itemsIndexed(searchSongResults) { idx, song ->
+                                            val isCurrent = (currentSong?.id == song.id && isPlaying)
+                                            val isFav = favoriteSongIds.contains(song.id)
+
+                                            val cleanSongTitle = song.title.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim().ifBlank { "Untitled" }
+                                            val rawSongSub = song.artist.ifBlank { song.subtitle.ifBlank { song.album } }.replace(Regex("""\{.*?\}"""), "").replace("{", "").replace("}", "").trim()
+                                            val cleanSongSub = if (rawSongSub.isBlank() || rawSongSub == "{}") "JioSaavn Music" else rawSongSub
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        playerManager.playSong(song, searchSongResults)
+                                                        playerManager.openPlayer()
+                                                    }
+                                                    .padding(vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "%02d".format(idx + 1),
+                                                    color = if (isCurrent) SearchTeal else SearchTextMuted,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.width(28.dp)
+                                                )
+
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                AsyncImage(
+                                                    model = song.image,
+                                                    contentDescription = cleanSongTitle,
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .clip(RoundedCornerShape(8.dp)),
+                                                    contentScale = ContentScale.Crop
+                                                )
+
+                                                Spacer(modifier = Modifier.width(12.dp))
+
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = cleanSongTitle,
+                                                        color = if (isCurrent) SearchTeal else Color.White,
+                                                        fontSize = 14.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = cleanSongSub,
+                                                        color = SearchTextMuted,
+                                                        fontSize = 12.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { playerManager.toggleFavorite(song.id) },
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                        contentDescription = "Favorite",
+                                                        tint = if (isFav) Color(0xFFEF4444) else SearchTextMuted.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { selectedSongOptions = song },
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.MoreVert,
+                                                        contentDescription = "More",
+                                                        tint = SearchTextMuted.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }

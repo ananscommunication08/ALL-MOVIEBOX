@@ -19,6 +19,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -135,16 +138,25 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 @Composable
-fun Modifier.tvControlFocusable(shape: androidx.compose.ui.graphics.Shape = CircleShape): Modifier = composed {
+fun Modifier.tvControlFocusable(
+    shape: androidx.compose.ui.graphics.Shape = CircleShape,
+    borderColor: Color = Color.White
+): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.22f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "tv_ctrl_scale"
+    )
     this
+        .scale(scale)
         .onFocusChanged { isFocused = it.isFocused }
         .focusable()
         .then(
             if (isFocused) {
                 Modifier
-                    .border(2.5.dp, Color.White, shape)
-                    .background(Color.White.copy(alpha = 0.25f), shape)
+                    .border(3.dp, borderColor, shape)
+                    .background(Color.White.copy(alpha = 0.35f), shape)
             } else {
                 Modifier
             }
@@ -534,8 +546,8 @@ fun NormalPlayerSeekBar(
             },
         contentAlignment = Alignment.CenterStart
     ) {
-        val thumbRadius = if (isDragging || isFocused) 7.dp else 5.dp
-        val trackHeight = if (isFocused) 3.5.dp else 2.5.dp
+        val thumbRadius = if (isDragging || isFocused) 10.dp else 5.dp
+        val trackHeight = if (isFocused) 5.dp else 2.5.dp
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val centerY = size.height / 2f
@@ -553,7 +565,7 @@ fun NormalPlayerSeekBar(
             // Active track (thin solid white normal line)
             if (progressX > 0f) {
                 drawLine(
-                    color = Color.White,
+                    color = if (isFocused) Color(0xFFE50914) else Color.White,
                     start = Offset(0f, centerY),
                     end = Offset(progressX, centerY),
                     strokeWidth = trackHeight.toPx(),
@@ -561,9 +573,16 @@ fun NormalPlayerSeekBar(
                 )
             }
 
-            // Normal sleek white circular thumb
+            // Circular thumb with glowing red ring when focused for TV remote
+            if (isFocused) {
+                drawCircle(
+                    color = Color.White,
+                    radius = (thumbRadius + 3.dp).toPx(),
+                    center = Offset(progressX, centerY)
+                )
+            }
             drawCircle(
-                color = Color.White,
+                color = if (isFocused) Color(0xFFE50914) else Color.White,
                 radius = thumbRadius.toPx(),
                 center = Offset(progressX, centerY)
             )
@@ -987,10 +1006,10 @@ fun DetailVideoPlayer(
         }
     }
 
-    // Auto-hide controls after 4.5 seconds (keep visible while buffering on mobile so spinner around play button is visible)
+    // Auto-hide controls after 8 seconds on TV (4.5s on mobile)
     LaunchedEffect(controlsVisible, isPlaying, isLocked, isBuffering, isFetchingStream) {
         if (controlsVisible && isPlaying && !isLocked && !showSettingsDialog && !isBuffering && !isFetchingStream) {
-            delay(4500)
+            delay(if (isTv) 8000L else 4500L)
             controlsVisible = false
         }
     }
@@ -1005,11 +1024,12 @@ fun DetailVideoPlayer(
     // Request focus on play button when controls become visible on TV
     LaunchedEffect(controlsVisible) {
         if (controlsVisible && isTv) {
-            delay(60)
+            delay(120)
             try {
                 playControlFocusRequester.requestFocus()
             } catch (_: Exception) {}
-        } else if (!controlsVisible) {
+        } else if (!controlsVisible && isTv) {
+            delay(80)
             try {
                 playerFocusRequester.requestFocus()
             } catch (_: Exception) {}
@@ -1629,8 +1649,19 @@ fun DetailVideoPlayer(
                 )
             }
             .testTag("detail_exoplayer_container")
-            .focusRequester(playerFocusRequester)
-            .focusable()
+            .then(
+                if (!controlsVisible && isTv) {
+                    Modifier
+                        .focusRequester(playerFocusRequester)
+                        .focusable()
+                } else if (!isTv) {
+                    Modifier
+                        .focusRequester(playerFocusRequester)
+                        .focusable()
+                } else {
+                    Modifier
+                }
+            )
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     if (isTv) {
@@ -2065,7 +2096,7 @@ fun DetailVideoPlayer(
                                     modifier = Modifier
                                         .size(50.dp)
                                         .focusRequester(playControlFocusRequester)
-                                        .tvControlFocusable(CircleShape)
+                                        .tvControlFocusable(CircleShape, borderColor = Color(0xFFE50914))
                                         .clickable {
                                             if (exoPlayer.isPlaying) {
                                                 exoPlayer.pause()

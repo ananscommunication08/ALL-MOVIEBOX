@@ -51,6 +51,8 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -165,6 +167,67 @@ fun FullScreenMusicPlayer(
         label = "player_rotation"
     )
 
+    // Animated Music Waves around the circular thumbnail
+    val wave1Transition = rememberInfiniteTransition(label = "wave1")
+    val wave1Scale by wave1Transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.32f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave1_scale"
+    )
+    val wave1Alpha by wave1Transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave1_alpha"
+    )
+
+    val wave2Transition = rememberInfiniteTransition(label = "wave2")
+    val wave2Scale by wave2Transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.48f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2600, delayMillis = 400, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave2_scale"
+    )
+    val wave2Alpha by wave2Transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2600, delayMillis = 400, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave2_alpha"
+    )
+
+    val wave3Transition = rememberInfiniteTransition(label = "wave3")
+    val wave3Scale by wave3Transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.62f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3200, delayMillis = 800, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave3_scale"
+    )
+    val wave3Alpha by wave3Transition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3200, delayMillis = 800, easing = LinearEasing),
+            repeatMode = AnimRepeatMode.Restart
+        ),
+        label = "wave3_alpha"
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -188,98 +251,120 @@ fun FullScreenMusicPlayer(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. TOP BAR
-            Row(
+            // 1. CLEAN TOP HEADER (No Down Arrow, Centered and Sleek)
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(top = 4.dp, bottom = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                IconButton(
-                    onClick = { playerManager.closePlayer() },
-                    modifier = Modifier.testTag("player_collapse_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Collapse",
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "PLAYING FROM JIOSAAVN",
-                        color = Color.White.copy(alpha = 0.55f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
-                    )
-                    Text(
-                        text = song.album.ifBlank { "Top Songs" },
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Bitrate Badge
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF00D26A).copy(alpha = 0.18f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00D26A).copy(alpha = 0.6f)),
+                // Subtle drag / tap handle to collapse
+                Box(
                     modifier = Modifier
-                        .clickable { showQualityDialog = true }
-                        .testTag("player_quality_badge")
-                ) {
-                    Text(
-                        text = "${currentBitrate}k HQ",
-                        color = Color(0xFF00D26A),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
+                        .size(width = 38.dp, height = 4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                        .clickable { playerManager.closePlayer() }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "PLAYING FROM JIOSAAVN",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.4.sp
+                )
+                Text(
+                    text = song.album.ifBlank { "Top Songs" },
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 2. ALBUM ART
+            // 2. CIRCULAR ROTATING THUMBNAIL WITH ANIMATED MUSIC WAVES
             Box(
                 modifier = Modifier
-                    .weight(1f, fill = false)
-                    .aspectRatio(1f)
-                    .shadow(24.dp, RoundedCornerShape(24.dp), ambientColor = Color(0xFF00D26A).copy(alpha = 0.3f))
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black.copy(alpha = 0.5f)),
+                    .size(260.dp)
+                    .padding(4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(song.image)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = song.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(RoundedCornerShape(24.dp))
-                )
-
-                if (isBuffering) {
+                if (isPlaying) {
+                    // Outer Pulsing Music Wave Rings
                     Box(
                         modifier = Modifier
+                            .size(200.dp)
+                            .graphicsLayer(scaleX = wave3Scale, scaleY = wave3Scale, alpha = wave3Alpha)
+                            .border(2.dp, Color(0xFF8B5CF6), CircleShape)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(200.dp)
+                            .graphicsLayer(scaleX = wave2Scale, scaleY = wave2Scale, alpha = wave2Alpha)
+                            .border(2.5.dp, Color(0xFF2BC5B4), CircleShape)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(200.dp)
+                            .graphicsLayer(scaleX = wave1Scale, scaleY = wave1Scale, alpha = wave1Alpha)
+                            .border(3.dp, Color(0xFF00D26A), CircleShape)
+                    )
+                }
+
+                // Rotating Circular Thumbnail (Vinyl Disc)
+                Box(
+                    modifier = Modifier
+                        .size(200.dp)
+                        .shadow(24.dp, CircleShape, ambientColor = Color(0xFF00D26A).copy(alpha = 0.4f))
+                        .clip(CircleShape)
+                        .border(3.dp, Color(0xFF00D26A).copy(alpha = 0.8f), CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(song.image)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = song.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.4f)),
+                            .clip(CircleShape)
+                            .then(if (isPlaying) Modifier.rotate(rotation) else Modifier)
+                    )
+
+                    // Vinyl center core and spindle dot
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.85f))
+                            .border(1.5.dp, Color.White.copy(alpha = 0.4f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFF00D26A),
-                            modifier = Modifier.size(48.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF00D26A))
                         )
+                    }
+
+                    if (isBuffering) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.4f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color(0xFF00D26A),
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -437,36 +522,26 @@ fun FullScreenMusicPlayer(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 5. MAIN CONTROLS ROW (Shuffle, Prev, Big Play/Pause, Next, Repeat)
+            // 5. MAIN CONTROLS ROW (Only 3 buttons: Prev, Play/Pause, Next. Next/Prev hidden if queue has 1 song)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.Center
             ) {
-                // Shuffle
-                IconButton(
-                    onClick = { playerManager.toggleShuffle() },
-                    modifier = Modifier.testTag("player_shuffle")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (isShuffle) Color(0xFF00D26A) else Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                // Previous
-                IconButton(
-                    onClick = { playerManager.playPrevious() },
-                    modifier = Modifier.size(52.dp).testTag("player_prev")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = "Previous",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp)
-                    )
+                if (queue.size > 1) {
+                    // Previous
+                    IconButton(
+                        onClick = { playerManager.playPrevious() },
+                        modifier = Modifier.size(52.dp).testTag("player_prev")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = "Previous",
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(32.dp))
                 }
 
                 // Play / Pause (Large Center Button)
@@ -487,49 +562,31 @@ fun FullScreenMusicPlayer(
                     )
                 }
 
-                // Next
-                IconButton(
-                    onClick = { playerManager.playNext() },
-                    modifier = Modifier.size(52.dp).testTag("player_next")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = "Next",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-
-                // Repeat
-                IconButton(
-                    onClick = { playerManager.cycleRepeatMode() },
-                    modifier = Modifier.testTag("player_repeat")
-                ) {
-                    val icon = when (repeatMode) {
-                        RepeatMode.ONE -> Icons.Default.RepeatOne
-                        else -> Icons.Default.Repeat
+                if (queue.size > 1) {
+                    Spacer(modifier = Modifier.width(32.dp))
+                    // Next
+                    IconButton(
+                        onClick = { playerManager.playNext() },
+                        modifier = Modifier.size(52.dp).testTag("player_next")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next",
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp)
+                        )
                     }
-                    val tint = when (repeatMode) {
-                        RepeatMode.OFF -> Color.White.copy(alpha = 0.5f)
-                        else -> Color(0xFF00D26A)
-                    }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = "Repeat",
-                        tint = tint,
-                        modifier = Modifier.size(24.dp)
-                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 6. BOTTOM ACTIONS ROW (Lyrics, Queue)
+            // 6. BOTTOM ACTIONS ROW (Lyrics, Audio Quality in Middle, Queue)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Lyrics button
@@ -541,7 +598,7 @@ fun FullScreenMusicPlayer(
                             playerManager.fetchLyrics()
                             showLyricsSheet = true
                         }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -550,12 +607,38 @@ fun FullScreenMusicPlayer(
                         tint = Color(0xFF00D26A),
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Lyrics",
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Audio Quality Button (in the middle between Lyrics & Queue)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF00D26A).copy(alpha = 0.16f))
+                        .border(1.dp, Color(0xFF00D26A).copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+                        .clickable { showQualityDialog = true }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                        .testTag("player_quality_badge"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Audio Quality",
+                        tint = Color(0xFF00D26A),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "${currentBitrate}k HQ",
+                        color = Color(0xFF00D26A),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
@@ -565,7 +648,7 @@ fun FullScreenMusicPlayer(
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color.White.copy(alpha = 0.08f))
                         .clickable { showQueueSheet = true }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -574,7 +657,7 @@ fun FullScreenMusicPlayer(
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Queue (${queue.size})",
                         color = Color.White,

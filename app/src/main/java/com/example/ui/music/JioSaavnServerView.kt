@@ -110,8 +110,7 @@ fun JioSaavnServerView(
         when (item.type) {
             MediaType.SONG -> {
                 val songItem = item.toSaavnSongItem()
-                val playlist = homeData?.chartToppers.orEmpty().ifEmpty { listOf(songItem) }
-                playerManager.playSong(songItem, playlist)
+                playerManager.playSong(songItem, listOf(songItem))
                 playerManager.openPlayer()
             }
             MediaType.ALBUM -> {
