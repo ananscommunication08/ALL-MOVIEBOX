@@ -63,6 +63,12 @@ import coil.compose.AsyncImage
 import com.example.data.download.DownloadItem
 import com.example.data.download.DownloadStatus
 import com.example.data.download.MovieDownloadManager
+import com.example.data.model.DownloadedSongItem
+import com.example.data.model.SaavnSongItem
+import com.example.data.music.MusicDownloadManager
+import com.example.data.music.MusicPlayerManager
+import com.example.ui.music.FullScreenMusicPlayer
+import com.example.ui.music.components.MiniMusicPlayer
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
@@ -76,7 +82,11 @@ fun DownloadScreen(
 ) {
     val context = LocalContext.current
     val downloadManager = remember { MovieDownloadManager.getInstance(context) }
+    val musicDownloadManager = remember { MusicDownloadManager.getInstance(context) }
+    val musicPlayerManager = remember { MusicPlayerManager.getInstance(context) }
+
     val downloads by downloadManager.downloads.collectAsState()
+    val downloadedSongs by musicDownloadManager.downloadedSongs.collectAsState()
 
     val downloadingList = remember(downloads) {
         downloads.filter { it.status != DownloadStatus.COMPLETED }
@@ -86,7 +96,7 @@ fun DownloadScreen(
     }
 
     var selectedTabIndex by remember {
-        mutableIntStateOf(if (downloadingList.isNotEmpty()) 0 else if (completedList.isNotEmpty()) 1 else 0)
+        mutableIntStateOf(if (downloadingList.isNotEmpty()) 0 else if (completedList.isNotEmpty()) 1 else if (downloadedSongs.isNotEmpty()) 2 else 0)
     }
 
     BackHandler {
@@ -241,6 +251,37 @@ fun DownloadScreen(
                     }
                 }
             )
+
+            Tab(
+                selected = selectedTabIndex == 2,
+                onClick = { selectedTabIndex = 2 },
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Music",
+                            fontWeight = if (selectedTabIndex == 2) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selectedTabIndex == 2) Color(0xFF00D26A) else Color(0xFF94A3B8)
+                        )
+                        if (downloadedSongs.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = if (selectedTabIndex == 2) Color(0xFF00D26A) else Color(0xFF3F3F46),
+                                modifier = Modifier.size(18.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "${downloadedSongs.size}",
+                                        color = if (selectedTabIndex == 2) Color.Black else Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            )
         }
 
         // Tab Content
@@ -269,7 +310,7 @@ fun DownloadScreen(
                         }
                     }
                 }
-            } else {
+            } else if (selectedTabIndex == 1) {
                 // Completed List
                 if (completedList.isEmpty()) {
                     EmptyDownloadState(
@@ -292,6 +333,131 @@ fun DownloadScreen(
                         }
                     }
                 }
+            } else {
+                // Music Tab
+                if (downloadedSongs.isEmpty()) {
+                    EmptyDownloadState(
+                        icon = Icons.Default.FileDownloadOff,
+                        title = "No downloaded music yet",
+                        subtitle = "Download songs from JioSaavn to listen offline anytime with studio-grade sound quality."
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
+                    ) {
+                        items(downloadedSongs, key = { it.id }) { song ->
+                            DownloadedMusicItemCard(
+                                item = song,
+                                onPlay = {
+                                    val saavnSong = SaavnSongItem(
+                                        id = song.id,
+                                        title = song.title,
+                                        artist = song.artist,
+                                        album = song.album,
+                                        image = song.coverUrl,
+                                        durationSec = song.durationSec,
+                                        isDownloaded = true,
+                                        localFilePath = song.localFilePath
+                                    )
+                                    musicPlayerManager.playSong(saavnSong, listOf(saavnSong))
+                                    musicPlayerManager.openPlayer()
+                                },
+                                onDelete = { musicDownloadManager.deleteDownloadedSong(song.id) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Mini Music Player & Full Screen Player inside Download Screen
+            MiniMusicPlayer(modifier = Modifier.align(Alignment.BottomCenter))
+            FullScreenMusicPlayer()
+        }
+    }
+}
+
+@Composable
+private fun DownloadedMusicItemCard(
+    item: DownloadedSongItem,
+    onPlay: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = DarkSurface,
+        border = BorderStroke(1.dp, Color(0xFF27272A)),
+        modifier = Modifier.fillMaxWidth().clickable { onPlay() }
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = item.coverUrl,
+                contentDescription = item.title,
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = item.artist.ifBlank { item.album },
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xFF00D26A).copy(alpha = 0.18f)
+                    ) {
+                        Text(
+                            text = "${item.bitrateKbps} kbps HQ",
+                            color = Color(0xFF00D26A),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = MusicDownloadManager.formatBytes(item.fileSizeBytes),
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            IconButton(onClick = onPlay) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play Offline",
+                    tint = Color(0xFF00D26A),
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Default.DeleteOutline,
+                    contentDescription = "Delete Song",
+                    tint = Color(0xFFEF4444),
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }

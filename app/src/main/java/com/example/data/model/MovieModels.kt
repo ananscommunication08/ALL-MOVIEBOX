@@ -11,7 +11,8 @@ enum class AppServer(
     SERVER_2("server_2", "VSKit", "VSKit", "VSKit Short Dramas", "https://vskit.online/logo.svg"),
     SERVER_3("server_3", "Lookr", "Lookr", "Lookr Movies & Series", "https://videodownloader.site/assets/brand/omnisave-icon-hd.png?x-oss-process=image/resize%2Cw_600"),
     SERVER_4("server_4", "Story TV", "Story TV", "Story TV Short Dramas", "https://cdn.storytv.asia/wa/prod/splash_logo.svg"),
-    SERVER_5("server_5", "FreeReels", "FreeReels", "FreeReels Short Dramas", "https://play-lh.googleusercontent.com/4UD1HiZkmoTR3nzr5Z8qPvKzi7K1JptSmHPZtJ7MN7hi5WE8fNxHumvhRFHZS0r1SQ")
+    SERVER_5("server_5", "FreeReels", "FreeReels", "FreeReels Short Dramas", "https://play-lh.googleusercontent.com/4UD1HiZkmoTR3nzr5Z8qPvKzi7K1JptSmHPZtJ7MN7hi5WE8fNxHumvhRFHZS0r1SQ"),
+    SERVER_6("server_6", "JioSaavn", "Music", "JioSaavn Music & Podcasts", "https://play-lh.googleusercontent.com/kl-7LqnjbT0onFUgWNrcz06oRXovfvO_GVYZoLW1jNwl8NlpFx8NCwKgXuvp1hbWdZI")
 }
 
 data class FreeReelsEpisodeItem(

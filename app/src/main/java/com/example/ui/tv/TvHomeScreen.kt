@@ -274,6 +274,14 @@ fun TvHomeMainFeedView(
                     )
                 }
             }
+            AppServer.SERVER_6 -> {
+                // Server 6: JioSaavn Music
+                item(key = "tv_saavn_music") {
+                    Box(modifier = Modifier.fillMaxWidth().height(600.dp)) {
+                        com.example.ui.music.JioSaavnServerView()
+                    }
+                }
+            }
         }
     }
 }
@@ -482,6 +490,7 @@ private fun TvServerItemRow(
                             AppServer.SERVER_3 -> "S3"
                             AppServer.SERVER_4 -> "S4"
                             AppServer.SERVER_5 -> "S5"
+                            AppServer.SERVER_6 -> "S6"
                         },
                         color = Color.White,
                         fontSize = 12.sp,

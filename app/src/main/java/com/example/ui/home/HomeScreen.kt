@@ -98,6 +98,10 @@ import com.example.ui.home.components.FreeReelsServerView
 import com.example.ui.home.components.MovieRow
 import com.example.ui.home.components.NetworkStreamDialog
 import com.example.ui.home.components.ShortsReelPlayer
+import com.example.ui.music.FullScreenMusicPlayer
+import com.example.ui.music.JioSaavnSearchScreen
+import com.example.ui.music.JioSaavnServerView
+import com.example.ui.music.components.MiniMusicPlayer
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.MovieBoxRed
@@ -113,20 +117,21 @@ fun HomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val isTvDevice = remember { com.example.util.DeviceUtils.isAndroidTv(context) }
 
-    // Top-Level Screen Navigation Container with Smooth Animated Transitions
-    AnimatedContent(
-        targetState = uiState.currentScreen,
-        transitionSpec = {
-            if (targetState is AppScreen.Home) {
-                fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
-            } else {
-                (slideInHorizontally(animationSpec = tween(240)) { width -> width / 4 } + fadeIn(animationSpec = tween(240)))
-                    .togetherWith(slideOutHorizontally(animationSpec = tween(240)) { width -> -width / 4 } + fadeOut(animationSpec = tween(240)))
-            }
-        },
-        label = "screen_page_navigation",
-        modifier = modifier.fillMaxSize()
-    ) { screen ->
+    Box(modifier = modifier.fillMaxSize()) {
+        // Top-Level Screen Navigation Container with Smooth Animated Transitions
+        AnimatedContent(
+            targetState = uiState.currentScreen,
+            transitionSpec = {
+                if (targetState is AppScreen.Home) {
+                    fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
+                } else {
+                    (slideInHorizontally(animationSpec = tween(240)) { width -> width / 4 } + fadeIn(animationSpec = tween(240)))
+                        .togetherWith(slideOutHorizontally(animationSpec = tween(240)) { width -> -width / 4 } + fadeOut(animationSpec = tween(240)))
+                }
+            },
+            label = "screen_page_navigation",
+            modifier = Modifier.fillMaxSize()
+        ) { screen ->
         when (screen) {
             is AppScreen.Home -> {
                 if (isTvDevice) {
@@ -234,27 +239,33 @@ fun HomeScreen(
             }
 
             is AppScreen.Search -> {
-                SearchScreen(
-                    searchQuery = uiState.searchQuery,
-                    committedSearchQuery = uiState.committedSearchQuery,
-                    searchSuggestions = uiState.searchSuggestions,
-                    searchResults = uiState.searchResults,
-                    isSearchingSuggestions = uiState.isSearchingSuggestions,
-                    isSearchingMovies = uiState.isSearchingMovies,
-                    isMovieBoxSearchAutoLoading = uiState.isMovieBoxSearchAutoLoading,
-                    onQueryChanged = { viewModel.onSearchQueryChanged(it) },
-                    onSubmitSearch = { viewModel.submitSearch(it) },
-                    onClearSearch = { viewModel.clearSearch() },
-                    onBackClick = { viewModel.navigateBack() },
-                    onMovieClick = { movie ->
-                        if (movie.subjectType == 7 || movie.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movie.isStoryTvServer || movie.isFreeReelsServer) {
-                            viewModel.openShortsPlayer(movie)
-                        } else {
-                            viewModel.openMovieDetail(movie, isFromShortsPage = false)
-                        }
-                    },
-                    onLoadMore = { viewModel.loadMoreSearchResults() }
-                )
+                if (uiState.activeServer == AppServer.SERVER_6) {
+                    JioSaavnSearchScreen(
+                        onBackClick = { viewModel.navigateBack() }
+                    )
+                } else {
+                    SearchScreen(
+                        searchQuery = uiState.searchQuery,
+                        committedSearchQuery = uiState.committedSearchQuery,
+                        searchSuggestions = uiState.searchSuggestions,
+                        searchResults = uiState.searchResults,
+                        isSearchingSuggestions = uiState.isSearchingSuggestions,
+                        isSearchingMovies = uiState.isSearchingMovies,
+                        isMovieBoxSearchAutoLoading = uiState.isMovieBoxSearchAutoLoading,
+                        onQueryChanged = { viewModel.onSearchQueryChanged(it) },
+                        onSubmitSearch = { viewModel.submitSearch(it) },
+                        onClearSearch = { viewModel.clearSearch() },
+                        onBackClick = { viewModel.navigateBack() },
+                        onMovieClick = { movie ->
+                            if (movie.subjectType == 7 || movie.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movie.isStoryTvServer || movie.isFreeReelsServer) {
+                                viewModel.openShortsPlayer(movie)
+                            } else {
+                                viewModel.openMovieDetail(movie, isFromShortsPage = false)
+                            }
+                        },
+                        onLoadMore = { viewModel.loadMoreSearchResults() }
+                    )
+                }
             }
 
             is AppScreen.Shorts -> {
@@ -312,6 +323,14 @@ fun HomeScreen(
                 )
             }
         }
+
+        // Mini Music Player (Persistent Floating Bar across the entire app whenever playing)
+        MiniMusicPlayer(
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        // Full Screen Music Player Overlay (Available across all screens)
+        FullScreenMusicPlayer()
     }
 
     // Network Stream Dialog
@@ -405,6 +424,25 @@ private fun HomeMainFeedView(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     when (uiState.activeServer) {
+                        AppServer.SERVER_6 -> {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Transparent,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(AppServer.SERVER_6.logoUrl)
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = "JioSaavn Logo",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                            }
+                        }
                         AppServer.SERVER_5 -> {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -748,6 +786,12 @@ private fun HomeMainFeedView(
                     }
                 }
             }
+            AppServer.SERVER_6 -> {
+                // ==========================================
+                // SERVER 6: JIOSAAVN MUSIC SERVER LAYOUT
+                // ==========================================
+                JioSaavnServerView()
+            }
             AppServer.SERVER_5 -> {
                 // ==========================================
                 // SERVER 5: FREE REELS SERVER LAYOUT
@@ -932,6 +976,7 @@ private fun HomeMainFeedView(
             },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
                 .padding(end = 16.dp, bottom = 88.dp)
         )
     }
@@ -1088,7 +1133,7 @@ private fun ServerSquareItem(
                             modifier = Modifier.fillMaxSize()
                         )
                     }
-                    AppServer.SERVER_3, AppServer.SERVER_5 -> {
+                    AppServer.SERVER_3, AppServer.SERVER_5, AppServer.SERVER_6 -> {
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(server.logoUrl)

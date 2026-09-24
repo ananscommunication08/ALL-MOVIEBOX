@@ -309,7 +309,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             AppServer.SERVER_2 -> AppServer.SERVER_3
             AppServer.SERVER_3 -> AppServer.SERVER_4
             AppServer.SERVER_4 -> AppServer.SERVER_5
-            AppServer.SERVER_5 -> AppServer.SERVER_1
+            AppServer.SERVER_5 -> AppServer.SERVER_6
+            AppServer.SERVER_6 -> AppServer.SERVER_1
         }
         switchServer(nextServer)
     }
