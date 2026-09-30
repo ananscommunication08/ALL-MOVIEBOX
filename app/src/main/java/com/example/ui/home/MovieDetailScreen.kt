@@ -1,5 +1,6 @@
 package com.example.ui.home
 
+import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -34,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -84,15 +86,47 @@ fun MovieDetailScreen(
     val context = LocalContext.current
     val isTv = remember { com.example.util.DeviceUtils.isAndroidTv(context) }
     var activeMovie by remember(movie) { mutableStateOf(movie) }
-    var isFullscreen by remember { mutableStateOf(isTv) }
+    var isFullscreen by remember { mutableStateOf(false) }
     val detailScrollState = rememberScrollState()
 
-    // Intercept back key: on TV exit screen directly; on mobile if fullscreen exit fullscreen, else exit screen
+    val activity = remember {
+        var ctx = context
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is android.app.Activity) return@remember ctx
+            ctx = ctx.baseContext
+        }
+        null
+    }
+
+    // Ensure portrait orientation is restored on mobile when leaving detail screen or exiting fullscreen
+    DisposableEffect(Unit) {
+        onDispose {
+            if (!isTv) {
+                activity?.runOnUiThread {
+                    try {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(isFullscreen, isTv) {
+        if (!isTv && !isFullscreen) {
+            activity?.runOnUiThread {
+                try {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Intercept back key: if fullscreen exit fullscreen back to detail screen, else exit detail screen to caller
     BackHandler(enabled = true) {
-        if (isTv || !isFullscreen) {
-            onBackClick()
-        } else {
+        if (isFullscreen) {
             isFullscreen = false
+        } else {
+            onBackClick()
         }
     }
     val coroutineScope = rememberCoroutineScope()

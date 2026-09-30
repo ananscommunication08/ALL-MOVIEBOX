@@ -100,15 +100,7 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
 
-    var activeFilter by remember { mutableStateOf("All") }
-    val filteredResults = remember(searchResults, activeFilter) {
-        when (activeFilter) {
-            "Movies" -> searchResults.filter { !it.isSeries && !it.isShort && it.subjectType != 7 }
-            "Series" -> searchResults.filter { it.isSeries }
-            "Shorts" -> searchResults.filter { it.isShort || it.subjectType == 7 }
-            else -> searchResults
-        }
-    }
+    val filteredResults = searchResults
 
     LaunchedEffect(gridState, filteredResults.size) {
         snapshotFlow {
@@ -238,7 +230,9 @@ fun SearchScreen(
                             IconButton(
                                 onClick = {
                                     onClearSearch()
-                                    focusRequester.requestFocus()
+                                    try {
+                                        focusRequester.requestFocus()
+                                    } catch (_: Exception) {}
                                 },
                                 modifier = Modifier.size(28.dp)
                             ) {
@@ -250,24 +244,6 @@ fun SearchScreen(
                                 )
                             }
                         }
-                    }
-                }
-
-                // Category filter chips (Remote D-pad focusable for TV & touch for mobile)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 2.dp)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val filterOptions = listOf("All", "Movies", "Series", "Shorts")
-                    filterOptions.forEach { filterText ->
-                        SearchFilterChip(
-                            text = filterText,
-                            isSelected = activeFilter == filterText,
-                            onClick = { activeFilter = filterText }
-                        )
                     }
                 }
 
@@ -289,9 +265,13 @@ fun SearchScreen(
                                 .verticalScroll(rememberScrollState())
                         ) {
                             searchSuggestions.take(8).forEachIndexed { index, suggestion ->
+                                var isSuggestionFocused by remember { mutableStateOf(false) }
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .onFocusChanged { isSuggestionFocused = it.isFocused }
+                                        .focusable()
+                                        .background(if (isSuggestionFocused) Color.White.copy(alpha = 0.18f) else Color.Transparent)
                                         .clickable {
                                             focusManager.clearFocus()
                                             onSubmitSearch(suggestion)

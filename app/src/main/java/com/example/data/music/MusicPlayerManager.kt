@@ -113,7 +113,12 @@ class MusicPlayerManager private constructor(private val context: Context) {
                             }
                             Player.STATE_READY -> {
                                 _isBuffering.value = false
-                                _durationMs.value = duration.coerceAtLeast(0L)
+                                if (System.currentTimeMillis() - lastSeekTimestampMs > 1500L) {
+                                    isUserSeeking = false
+                                }
+                                if (duration > 0L) {
+                                    _durationMs.value = duration
+                                }
                             }
                             Player.STATE_ENDED -> {
                                 _isBuffering.value = false
@@ -182,6 +187,10 @@ class MusicPlayerManager private constructor(private val context: Context) {
         _queueIndex.value = idx
         _currentSong.value = song
         _currentLyrics.value = null
+        _playbackPositionMs.value = 0L
+        _durationMs.value = (song.durationSec * 1000L).coerceAtLeast(0L)
+        lastSeekTimestampMs = 0L
+        isUserSeeking = false
         if (autoOpen) {
             _isPlayerOpen.value = true
         }
@@ -221,7 +230,18 @@ class MusicPlayerManager private constructor(private val context: Context) {
                 if (song.directStreamUrl.isNotBlank()) {
                     song.directStreamUrl
                 } else {
-                    JioSaavnDecoder.decryptMediaUrl(song.encryptedMediaUrl, _currentBitrate.value)
+                    var encUrl = song.encryptedMediaUrl
+                    if (encUrl.isBlank() && song.id.isNotBlank()) {
+                        try {
+                            val details = JioSaavnApiClient.getSongDetails(song.id)
+                            if (details != null && details.encryptedMediaUrl.isNotBlank()) {
+                                encUrl = details.encryptedMediaUrl
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed fetching song details fallback: ${e.message}")
+                        }
+                    }
+                    JioSaavnDecoder.decryptMediaUrl(encUrl, _currentBitrate.value)
                 }
             }
 
@@ -247,12 +267,18 @@ class MusicPlayerManager private constructor(private val context: Context) {
         }
     }
 
+    @Volatile
+    private var lastSeekTimestampMs: Long = 0L
+
+    @Volatile
+    private var isUserSeeking: Boolean = false
+
     fun togglePlayPause() {
         val player = exoPlayer ?: return
         if (player.isPlaying) {
             player.pause()
         } else {
-            if (player.playbackState == Player.STATE_IDLE) {
+            if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
                 _currentSong.value?.let { playSongInternal(it, _playbackPositionMs.value) }
             } else {
                 player.play()
@@ -261,13 +287,31 @@ class MusicPlayerManager private constructor(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer?.seekTo(positionMs)
-        _playbackPositionMs.value = positionMs
+        val player = exoPlayer ?: return
+        lastSeekTimestampMs = System.currentTimeMillis()
+        isUserSeeking = true
+        val playerDur = player.duration.takeIf { it > 0L }
+        val stateDur = _durationMs.value.takeIf { it > 0L }
+        val songDur = ((_currentSong.value?.durationSec ?: 0) * 1000L).takeIf { it > 0L }
+        val effectiveDur = playerDur ?: stateDur ?: songDur ?: 0L
+        val maxSafePos = if (effectiveDur > 6000L) effectiveDur - 2500L else effectiveDur
+        val safePos = if (effectiveDur > 0L) {
+            positionMs.coerceIn(0L, maxSafePos)
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
+        _playbackPositionMs.value = safePos
+        player.seekTo(safePos)
     }
 
     fun playNext() {
         val q = _queue.value
         if (q.isEmpty()) return
+        if (q.size == 1) {
+            seekTo(0L)
+            exoPlayer?.play()
+            return
+        }
         var nextIdx = _queueIndex.value + 1
         if (nextIdx >= q.size) {
             nextIdx = 0
@@ -283,14 +327,15 @@ class MusicPlayerManager private constructor(private val context: Context) {
     fun playPrevious() {
         val q = _queue.value
         if (q.isEmpty()) return
-        // If played more than 3 seconds, restart current song
-        if (_playbackPositionMs.value > 3000L) {
+        // If played more than 3 seconds or queue has only 1 song, restart current song
+        if (_playbackPositionMs.value > 3000L || q.size == 1) {
             seekTo(0L)
+            exoPlayer?.play()
             return
         }
         var prevIdx = _queueIndex.value - 1
-        if (prevIdx < 0) {
-            prevIdx = q.size - 1
+        if (prevIdx < 0 || prevIdx >= q.size) {
+            prevIdx = (q.size - 1).coerceAtLeast(0)
         }
         _queueIndex.value = prevIdx
         val prevSong = q[prevIdx]
@@ -321,6 +366,39 @@ class MusicPlayerManager private constructor(private val context: Context) {
     }
 
     private fun handleSongEnded() {
+        val player = exoPlayer ?: return
+        val now = System.currentTimeMillis()
+
+        // 1. If seek happened recently (within 10 seconds) or user is currently seeking,
+        // ignore premature STATE_ENDED caused by network seek/buffering and resume playback of current song!
+        if (isUserSeeking || (now - lastSeekTimestampMs < 10000L)) {
+            Log.w(TAG, "STATE_ENDED ignored because seek occurred recently (${now - lastSeekTimestampMs}ms ago). Resuming playback.")
+            isUserSeeking = false
+            val targetPos = _playbackPositionMs.value
+            player.seekTo(targetPos)
+            player.prepare()
+            player.play()
+            return
+        }
+
+        val playerDur = player.duration.takeIf { it > 0L }
+        val stateDur = _durationMs.value.takeIf { it > 0L }
+        val songDur = ((_currentSong.value?.durationSec ?: 0) * 1000L).takeIf { it > 0L }
+        val effectiveDur = playerDur ?: stateDur ?: songDur ?: 0L
+        val cur = player.currentPosition
+
+        // 2. CRITICAL: Only advance to next song if playback genuinely reached the very end of track!
+        // If duration is unknown, or if current position has not reached the actual end (within 2s), DO NOT skip!
+        if (effectiveDur <= 5000L || cur < (effectiveDur - 2000L)) {
+            Log.w(TAG, "STATE_ENDED fired prematurely at $cur ms / $effectiveDur ms. Resuming playback rather than skipping.")
+            if (effectiveDur > 0L && cur < effectiveDur) {
+                player.seekTo(cur)
+                player.prepare()
+                player.play()
+            }
+            return
+        }
+
         when (_repeatMode.value) {
             RepeatMode.ONE -> {
                 seekTo(0L)

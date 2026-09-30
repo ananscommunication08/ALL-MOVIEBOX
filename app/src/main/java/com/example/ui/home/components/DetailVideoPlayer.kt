@@ -1,12 +1,14 @@
 package com.example.ui.home.components
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.util.Rational
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -136,6 +138,73 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+
+@Composable
+fun TvPlayerControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 44.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp,
+    isPrimary: Boolean = false,
+    focusRequester: FocusRequester? = null
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.25f else 1.0f,
+        animationSpec = tween(120),
+        label = "tv_btn_scale"
+    )
+
+    Box(
+        modifier = modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .size(size)
+            .scale(scale)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick)
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown &&
+                    (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                     keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER ||
+                     keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                    onClick()
+                    true
+                } else false
+            }
+            .background(
+                color = when {
+                    isFocused && isPrimary -> Color.White
+                    isFocused -> Color.White.copy(alpha = 0.35f)
+                    isPrimary -> Color.White
+                    else -> Color.Black.copy(alpha = 0.5f)
+                },
+                shape = CircleShape
+            )
+            .border(
+                width = if (isFocused) 3.5.dp else 1.dp,
+                color = when {
+                    isFocused && isPrimary -> Color(0xFFE50914)
+                    isFocused -> Color.White
+                    else -> Color.White.copy(alpha = 0.2f)
+                },
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = when {
+                isPrimary -> Color.Black
+                else -> Color.White
+            },
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
 
 @Composable
 fun Modifier.tvControlFocusable(
@@ -486,6 +555,11 @@ fun NormalPlayerSeekBar(
             .height(28.dp)
             .onFocusChanged { isFocused = it.isFocused }
             .focusable()
+            .border(
+                width = if (isFocused) 2.dp else 0.dp,
+                color = if (isFocused) Color.White else Color.Transparent,
+                shape = RoundedCornerShape(4.dp)
+            )
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1070,12 +1144,12 @@ fun DetailVideoPlayer(
 
     fun exitFullscreen() {
         activity?.runOnUiThread {
-            if (isTv) {
-                onBackClick?.invoke()
-            } else {
-                isFullscreenActive = false
-                onFullscreenChanged(false)
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            isFullscreenActive = false
+            onFullscreenChanged(false)
+            if (!isTv) {
+                try {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } catch (_: Exception) {}
                 showSystemUI(activity)
             }
         }
@@ -1096,11 +1170,17 @@ fun DetailVideoPlayer(
                     isVideoPortrait || isFromShortsPage || movie.isShort || movie.genre.contains("Short", ignoreCase = true)
                 }
 
-                if (isPortrait) {
-                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                } else {
+                try {
+                    if (isPortrait) {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    } else {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    }
+                } catch (_: Exception) {}
+            } else {
+                try {
                     activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                }
+                } catch (_: Exception) {}
             }
             hideSystemUI(activity)
         }
@@ -1126,25 +1206,21 @@ fun DetailVideoPlayer(
             } else {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             }
-            if (activity.requestedOrientation != targetOrientation) {
-                activity.requestedOrientation = targetOrientation
-            }
+            try {
+                if (activity.requestedOrientation != targetOrientation) {
+                    activity.requestedOrientation = targetOrientation
+                }
+            } catch (_: Exception) {}
         }
     }
 
     // Back button handling in player:
-    // Only intercept if screen is locked (to unlock), in fullscreen (to exit fullscreen), or on TV
-    BackHandler(enabled = isLocked || isFullscreenActive || isTv) {
+    // Only intercept if screen is locked (to unlock) or in fullscreen (to exit fullscreen)
+    BackHandler(enabled = isLocked || isFullscreenActive) {
         if (isLocked) {
             isLocked = false
-        } else if (isTv && controlsVisible) {
-            controlsVisible = false
-        } else if (isTv) {
-            onBackClick?.invoke()
         } else if (isFullscreenActive) {
             exitFullscreen()
-        } else {
-            onBackClick?.invoke()
         }
     }
 
@@ -1886,26 +1962,28 @@ fun DetailVideoPlayer(
                             modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Back button only visible in fullscreen mode (exits fullscreen or exits player on TV)
-                            if (isFullscreenActive) {
-                                IconButton(
-                                    onClick = {
-                                        if (isTv) onBackClick?.invoke() else exitFullscreen()
-                                    },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .tvControlFocusable()
-                                        .testTag("player_back_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                                Spacer(Modifier.width(8.dp))
+                            // Back button: in fullscreen mode it exits fullscreen back to detail screen; in non-fullscreen it goes back to previous screen
+                            IconButton(
+                                onClick = {
+                                    if (isFullscreenActive) {
+                                        exitFullscreen()
+                                    } else {
+                                        onBackClick?.invoke()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .tvControlFocusable()
+                                    .testTag("player_back_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
+                            Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f, fill = false)) {
                                 Text(
                                     text = movie.title,
@@ -2008,7 +2086,7 @@ fun DetailVideoPlayer(
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 10.dp)
                     ) {
-                        // ROW 1: Aspect Ratio, PiP, Rewind, White Circle Play/Pause, Fast Forward, Settings, Fullscreen
+                        // ROW 1: Aspect Ratio, Rewind, White Circle Play/Pause, Fast Forward, Settings, Fullscreen
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2017,66 +2095,37 @@ fun DetailVideoPlayer(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // 1. Aspect Ratio / Resize button (Fit / Fill / Zoom)
-                            IconButton(
+                            TvPlayerControlButton(
+                                icon = Icons.Default.AspectRatio,
+                                contentDescription = "Aspect Ratio",
                                 onClick = {
                                     resizeMode = when (resizeMode) {
                                         AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                                         AspectRatioFrameLayout.RESIZE_MODE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                                         else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                                     }
-                                },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .tvControlFocusable()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AspectRatio,
-                                    contentDescription = "Aspect Ratio",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                                }
+                            )
 
-                            // 2. Picture-in-Picture (PiP) button
-                            IconButton(
+                            // 2. Picture-in-Picture (PiP) Button
+                            TvPlayerControlButton(
+                                icon = Icons.Default.PictureInPictureAlt,
+                                contentDescription = "Picture in Picture",
                                 onClick = {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                        try {
-                                            activity?.enterPictureInPictureMode(
-                                                android.app.PictureInPictureParams.Builder().build()
-                                            )
-                                        } catch (_: Exception) {}
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .tvControlFocusable()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PictureInPictureAlt,
-                                    contentDescription = "Picture in Picture",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                                    enterPipMode(context)
+                                }
+                            )
 
                             // 3. Fast Rewind (<<)
-                            IconButton(
+                            TvPlayerControlButton(
+                                icon = Icons.Default.FastRewind,
+                                contentDescription = "Rewind",
+                                iconSize = 28.dp,
                                 onClick = {
                                     val newPos = (exoPlayer.currentPosition - 10000L).coerceAtLeast(0L)
                                     exoPlayer.seekTo(newPos)
-                                },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .tvControlFocusable()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FastRewind,
-                                    contentDescription = "Rewind",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(30.dp)
-                                )
-                            }
+                                }
+                            )
 
                             // 4. White Solid Circle Play / Pause Button with Circular Loading Indicator around it
                             Box(
@@ -2090,91 +2139,59 @@ fun DetailVideoPlayer(
                                         modifier = Modifier.size(62.dp)
                                     )
                                 }
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color.White,
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .focusRequester(playControlFocusRequester)
-                                        .tvControlFocusable(CircleShape, borderColor = Color(0xFFE50914))
-                                        .clickable {
-                                            if (exoPlayer.isPlaying) {
-                                                exoPlayer.pause()
-                                            } else {
-                                                exoPlayer.play()
-                                            }
+                                TvPlayerControlButton(
+                                    icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    isPrimary = true,
+                                    size = 54.dp,
+                                    iconSize = 32.dp,
+                                    focusRequester = playControlFocusRequester,
+                                    onClick = {
+                                        if (exoPlayer.isPlaying) {
+                                            exoPlayer.pause()
+                                        } else {
+                                            exoPlayer.play()
                                         }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                            contentDescription = if (isPlaying) "Pause" else "Play",
-                                            tint = Color.Black,
-                                            modifier = Modifier.size(30.dp)
-                                        )
                                     }
-                                }
-                            }
-
-                            // 5. Fast Forward (>>)
-                            IconButton(
-                                onClick = {
-                                    val newPos = (exoPlayer.currentPosition + 10000L).coerceAtMost(exoPlayer.duration)
-                                    exoPlayer.seekTo(newPos)
-                                },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .tvControlFocusable()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FastForward,
-                                    contentDescription = "Fast Forward",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(30.dp)
                                 )
                             }
 
+                            // 5. Fast Forward (>>)
+                            TvPlayerControlButton(
+                                icon = Icons.Default.FastForward,
+                                contentDescription = "Fast Forward",
+                                iconSize = 28.dp,
+                                onClick = {
+                                    val newPos = (exoPlayer.currentPosition + 10000L).coerceAtMost(exoPlayer.duration)
+                                    exoPlayer.seekTo(newPos)
+                                }
+                            )
+
                             // 6. Settings Gear Button (Opens Settings Modal Dialog)
-                            IconButton(
+                            TvPlayerControlButton(
+                                icon = Icons.Default.Settings,
+                                contentDescription = "Settings",
                                 onClick = {
                                     tempSelectedVideoQuality = currentActiveVideoQuality
                                     tempSelectedAudioTrackId = currentActiveAudioTrackId
                                     settingsActiveTab = "VIDEO"
                                     showSettingsDialog = true
-                                },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .tvControlFocusable()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = "Settings",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                                }
+                            )
 
                             // 7. Fullscreen Toggle Button (Not needed on TV since TV is always full screen)
                             if (!isTv) {
-                                IconButton(
+                                TvPlayerControlButton(
+                                    icon = if (isFullscreenActive) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                    contentDescription = "Fullscreen",
                                     onClick = {
                                         if (isFullscreenActive) {
                                             exitFullscreen()
                                         } else {
                                             enterFullscreen()
                                         }
-                                    },
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .tvControlFocusable()
-                                ) {
-                                    Icon(
-                                        imageVector = if (isFullscreenActive) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                        contentDescription = if (isFullscreenActive) "Exit Fullscreen" else "Enter Fullscreen",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
+                                    }
+                                )
                             }
                         }
 
@@ -2392,6 +2409,22 @@ fun DetailVideoPlayer(
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
             )
+        }
+    }
+}
+
+private fun enterPipMode(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val activity = context.findActivity() ?: return
+        try {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            activity.enterPictureInPictureMode(params)
+        } catch (_: Exception) {
+            try {
+                activity.enterPictureInPictureMode()
+            } catch (_: Exception) {}
         }
     }
 }

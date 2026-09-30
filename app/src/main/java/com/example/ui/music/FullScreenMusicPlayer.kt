@@ -1,11 +1,13 @@
 package com.example.ui.music
 
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -16,6 +18,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,7 +56,12 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -138,6 +147,7 @@ fun FullScreenMusicPlayer(
     // User slider dragging
     var isDraggingSlider by remember { mutableStateOf(false) }
     var dragSliderValue by remember { mutableFloatStateOf(0f) }
+    var lastSeekFinishedTime by remember { mutableStateOf(0L) }
 
     if (!isPlayerOpen || currentSong == null) return
 
@@ -231,6 +241,11 @@ fun FullScreenMusicPlayer(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { /* Disable and consume all clicks across background so they NEVER fall through */ }
+            )
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
@@ -247,41 +262,86 @@ fun FullScreenMusicPlayer(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 8.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. CLEAN TOP HEADER (No Down Arrow, Centered and Sleek)
-            Column(
+            // 1. TOP NAVIGATION HEADER (Back / Collapse, Title & Actions with TV D-Pad focus)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp, bottom = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Subtle drag / tap handle to collapse
-                Box(
+                var isBackFocused by remember { mutableStateOf(false) }
+                IconButton(
+                    onClick = { playerManager.closePlayer() },
                     modifier = Modifier
-                        .size(width = 38.dp, height = 4.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.25f))
-                        .clickable { playerManager.closePlayer() }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "PLAYING FROM JIOSAAVN",
-                    color = Color.White.copy(alpha = 0.55f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.4.sp
-                )
-                Text(
-                    text = song.album.ifBlank { "Top Songs" },
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                        .size(42.dp)
+                        .onFocusChanged { isBackFocused = it.isFocused }
+                        .focusable()
+                        .border(
+                            width = if (isBackFocused) 2.dp else 0.dp,
+                            color = if (isBackFocused) Color.White else Color.Transparent,
+                            shape = CircleShape
+                        )
+                        .background(Color.White.copy(alpha = if (isBackFocused) 0.25f else 0.1f), CircleShape)
+                        .testTag("player_collapse_bar")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Collapse Player",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                ) {
+                    Text(
+                        text = "PLAYING FROM JIOSAAVN",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.4.sp
+                    )
+                    Text(
+                        text = song.album.ifBlank { "Top Songs" },
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    var isQueueFocused by remember { mutableStateOf(false) }
+                    IconButton(
+                        onClick = { showQueueSheet = true },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .onFocusChanged { isQueueFocused = it.isFocused }
+                            .focusable()
+                            .border(
+                                width = if (isQueueFocused) 2.dp else 0.dp,
+                                color = if (isQueueFocused) Color.White else Color.Transparent,
+                                shape = CircleShape
+                            )
+                            .background(Color.White.copy(alpha = if (isQueueFocused) 0.25f else 0.1f), CircleShape)
+                            .testTag("player_queue_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = "Queue",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
 
             // 2. CIRCULAR ROTATING THUMBNAIL WITH ANIMATED MUSIC WAVES
@@ -314,6 +374,7 @@ fun FullScreenMusicPlayer(
                 }
 
                 // Rotating Circular Thumbnail (Vinyl Disc)
+                // Note: Tapping thumbnail intentionally does NOT trigger play/pause or any action
                 Box(
                     modifier = Modifier
                         .size(200.dp)
@@ -464,41 +525,79 @@ fun FullScreenMusicPlayer(
                 val effectiveDuration = if (durationMs > 0L) durationMs else (song.durationSec * 1000L)
                 val currentSliderValue = if (isDraggingSlider) {
                     dragSliderValue
+                } else if (System.currentTimeMillis() - lastSeekFinishedTime < 1000L) {
+                    dragSliderValue
                 } else {
                     if (effectiveDuration > 0L) (positionMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) else 0f
                 }
 
-                Slider(
-                    value = currentSliderValue,
-                    onValueChange = {
-                        isDraggingSlider = true
-                        dragSliderValue = it
-                    },
-                    onValueChangeFinished = {
-                        isDraggingSlider = false
-                        val targetMs = (dragSliderValue * effectiveDuration).toLong()
-                        playerManager.seekTo(targetMs)
-                    },
-                    thumb = {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF00D26A))
+                var isSeekbarFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { isSeekbarFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        val newPos = (positionMs - 10000L).coerceAtLeast(0L)
+                                        playerManager.seekTo(newPos)
+                                        true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        val maxPos = if (effectiveDuration > 6000L) effectiveDuration - 2500L else effectiveDuration
+                                        val newPos = (positionMs + 10000L).coerceAtMost(maxPos)
+                                        playerManager.seekTo(newPos)
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                        .border(
+                            width = if (isSeekbarFocused) 2.dp else 0.dp,
+                            color = if (isSeekbarFocused) Color(0xFF00D26A) else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
                         )
-                    },
-                    track = { sliderState ->
-                        SliderDefaults.Track(
-                            sliderState = sliderState,
-                            modifier = Modifier.height(3.dp),
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = Color(0xFF00D26A),
-                                inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Slider(
+                        value = currentSliderValue,
+                        onValueChange = {
+                            isDraggingSlider = true
+                            dragSliderValue = it
+                        },
+                        onValueChangeFinished = {
+                            lastSeekFinishedTime = System.currentTimeMillis()
+                            if (effectiveDuration > 0L) {
+                                val maxSeekable = if (effectiveDuration > 6000L) effectiveDuration - 2500L else effectiveDuration
+                                val targetMs = ((dragSliderValue * effectiveDuration).toLong()).coerceIn(0L, maxSeekable)
+                                playerManager.seekTo(targetMs)
+                            }
+                            isDraggingSlider = false
+                        },
+                        thumb = {
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF00D26A))
                             )
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("player_seekbar")
-                )
+                        },
+                        track = { sliderState ->
+                            SliderDefaults.Track(
+                                sliderState = sliderState,
+                                modifier = Modifier.height(3.dp),
+                                colors = SliderDefaults.colors(
+                                    activeTrackColor = Color(0xFF00D26A),
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("player_seekbar")
+                    )
+                }
 
                 Row(
                     modifier = Modifier
@@ -522,34 +621,53 @@ fun FullScreenMusicPlayer(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 5. MAIN CONTROLS ROW (Only 3 buttons: Prev, Play/Pause, Next. Next/Prev hidden if queue has 1 song)
+            // 5. MAIN CONTROLS ROW (Prev, Play/Pause, Next)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                if (queue.size > 1) {
-                    // Previous
-                    IconButton(
-                        onClick = { playerManager.playPrevious() },
-                        modifier = Modifier.size(52.dp).testTag("player_prev")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipPrevious,
-                            contentDescription = "Previous",
-                            tint = Color.White,
-                            modifier = Modifier.size(36.dp)
+                var isPrevFocused by remember { mutableStateOf(false) }
+                // Previous
+                IconButton(
+                    onClick = { playerManager.playPrevious() },
+                    modifier = Modifier
+                        .size(52.dp)
+                        .onFocusChanged { isPrevFocused = it.isFocused }
+                        .focusable()
+                        .border(
+                            width = if (isPrevFocused) 2.5.dp else 0.dp,
+                            color = if (isPrevFocused) Color(0xFF00D26A) else Color.Transparent,
+                            shape = CircleShape
                         )
-                    }
-                    Spacer(modifier = Modifier.width(32.dp))
+                        .testTag("player_prev")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Previous",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    )
                 }
 
+                Spacer(modifier = Modifier.width(32.dp))
+
                 // Play / Pause (Large Center Button)
+                var isPlayFocused by remember { mutableStateOf(false) }
+                val playScale by animateFloatAsState(if (isPlayFocused) 1.12f else 1f, label = "play_scale")
                 Box(
                     modifier = Modifier
+                        .scale(playScale)
                         .size(72.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF00D26A))
+                        .border(
+                            width = if (isPlayFocused) 3.5.dp else 0.dp,
+                            color = if (isPlayFocused) Color.White else Color.Transparent,
+                            shape = CircleShape
+                        )
+                        .onFocusChanged { isPlayFocused = it.isFocused }
+                        .focusable()
                         .clickable { playerManager.togglePlayPause() }
                         .testTag("player_play_pause"),
                     contentAlignment = Alignment.Center
@@ -562,20 +680,29 @@ fun FullScreenMusicPlayer(
                     )
                 }
 
-                if (queue.size > 1) {
-                    Spacer(modifier = Modifier.width(32.dp))
-                    // Next
-                    IconButton(
-                        onClick = { playerManager.playNext() },
-                        modifier = Modifier.size(52.dp).testTag("player_next")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = "Next",
-                            tint = Color.White,
-                            modifier = Modifier.size(36.dp)
+                Spacer(modifier = Modifier.width(32.dp))
+
+                var isNextFocused by remember { mutableStateOf(false) }
+                // Next
+                IconButton(
+                    onClick = { playerManager.playNext() },
+                    modifier = Modifier
+                        .size(52.dp)
+                        .onFocusChanged { isNextFocused = it.isFocused }
+                        .focusable()
+                        .border(
+                            width = if (isNextFocused) 2.5.dp else 0.dp,
+                            color = if (isNextFocused) Color(0xFF00D26A) else Color.Transparent,
+                            shape = CircleShape
                         )
-                    }
+                        .testTag("player_next")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Next",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    )
                 }
             }
 

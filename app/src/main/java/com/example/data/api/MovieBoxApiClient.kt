@@ -240,11 +240,17 @@ object MovieBoxApiClient {
         loadBundledHomeFeed(context)
     }
 
+    @Volatile
+    private var cachedBundledFeed: HomeFeedData? = null
+
     fun loadBundledHomeFeed(context: Context): HomeFeedData {
+        cachedBundledFeed?.let { return it }
         return try {
             val inputStream = context.resources.openRawResource(R.raw.default_home)
             val jsonString = inputStream.bufferedReader().use { it.readText() }
-            parseHomeFeedJson(jsonString)
+            val parsed = parseHomeFeedJson(jsonString)
+            cachedBundledFeed = parsed
+            parsed
         } catch (e: Exception) {
             Log.e(TAG, "Error loading bundled cache", e)
             HomeFeedData()

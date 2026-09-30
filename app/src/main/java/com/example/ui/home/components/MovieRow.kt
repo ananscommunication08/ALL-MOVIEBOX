@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -145,7 +146,10 @@ fun MovieRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(section.items, key = { it.id.ifBlank { it.title } }) { movie ->
+            itemsIndexed(
+                section.items,
+                key = { index, movie -> "${section.id}_${movie.id.ifBlank { movie.title }}_$index" }
+            ) { _, movie ->
                 if (isLandscape) {
                     MovieLandscapeCard(
                         movie = movie,
@@ -172,14 +176,8 @@ fun MovieCard(
     useFixedDimension: Boolean = true,
     forceShortsTag: Boolean = false
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.05f else (if (isPressed) 0.96f else 1f),
-        animationSpec = tween(durationMillis = 120),
-        label = "card_scale"
-    )
+    val focusScale = if (isFocused) Modifier.scale(1.04f) else Modifier
 
     // Standard cinema portrait poster dimensions (increased height according to portrait movie poster ratio)
     val cardWidth = if (movie.isShort) 136.dp else 130.dp
@@ -199,14 +197,10 @@ fun MovieCard(
 
     Column(
         modifier = baseModifier
-            .scale(scale)
+            .then(focusScale)
             .onFocusChanged { isFocused = it.isFocused }
             .focusable()
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
+            .clickable(onClick = onClick)
             .testTag("movie_card_${movie.id}")
     ) {
         // Poster Card with border when focused for TV remote navigation
@@ -347,13 +341,8 @@ fun MovieLandscapeCard(
     useFixedDimension: Boolean = true,
     forceShortsTag: Boolean = false
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
-        animationSpec = tween(durationMillis = 150),
-        label = "landscape_card_scale"
-    )
+    var isFocused by remember { mutableStateOf(false) }
+    val focusScale = if (isFocused) Modifier.scale(1.04f) else Modifier
 
     val baseModifier = if (useFixedDimension) {
         modifier.width(210.dp)
@@ -369,12 +358,10 @@ fun MovieLandscapeCard(
 
     Column(
         modifier = baseModifier
-            .scale(scale)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
+            .then(focusScale)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick)
             .testTag("movie_landscape_card_${movie.id}")
     ) {
         // Landscape 16:9 widescreen card - 5px radius, NO border & NO border color

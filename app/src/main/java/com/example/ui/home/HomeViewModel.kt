@@ -15,6 +15,7 @@ import com.example.data.model.HomeFeedData
 import com.example.data.model.MovieItem
 import com.example.data.repository.MovieBoxRepository
 import com.example.data.model.toMovieItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface AppScreen {
     data object Home : AppScreen
@@ -131,19 +133,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadData() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             repository.getHomeFeedStream().collectLatest { feed ->
-                _uiState.update { state ->
-                    val filtered = computeFilteredSections(
-                        feed.sections,
-                        state.selectedCategoryFilter,
-                        state.selectedPlatform
-                    )
-                    state.copy(
-                        feedData = feed,
-                        isLoading = false,
-                        filteredSections = filtered
-                    )
+                val currentCategory = _uiState.value.selectedCategoryFilter
+                val currentPlatform = _uiState.value.selectedPlatform
+                val filtered = computeFilteredSections(
+                    feed.sections,
+                    currentCategory,
+                    currentPlatform
+                )
+                withContext(Dispatchers.Main) {
+                    _uiState.update { state ->
+                        state.copy(
+                            feedData = feed,
+                            isLoading = false,
+                            filteredSections = filtered
+                        )
+                    }
                 }
             }
         }
@@ -995,6 +1001,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         clearSearch()
         _uiState.update {
             it.copy(
+                isSearchOpen = true,
+                screenStack = it.screenStack + AppScreen.Search
+            )
+        }
+    }
+
+    fun openSearchWithQuery(query: String) {
+        val q = query.trim()
+        _uiState.update {
+            it.copy(
+                searchQuery = q,
+                committedSearchQuery = q,
                 isSearchOpen = true,
                 screenStack = it.screenStack + AppScreen.Search
             )

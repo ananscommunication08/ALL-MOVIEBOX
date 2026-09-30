@@ -14,6 +14,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -134,99 +136,52 @@ fun HomeScreen(
         ) { screen ->
         when (screen) {
             is AppScreen.Home -> {
-                if (isTvDevice) {
-                    com.example.ui.tv.TvHomeMainFeedView(
-                        uiState = uiState,
-                        onOpenSearch = { viewModel.openSearch() },
-                        onOpenDownloads = { viewModel.openDownloads() },
-                        onBannerClick = { banner ->
-                            val movieItem = banner.toMovieItem()
-                            if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
-                                viewModel.openShortsPlayer(movieItem)
-                            } else {
-                                viewModel.openBannerDetail(banner)
-                            }
-                        },
-                        onPlayBanner = { banner ->
-                            val movieItem = banner.toMovieItem()
-                            if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
-                                viewModel.openShortsPlayer(movieItem)
-                            } else {
-                                viewModel.openMovieDetail(movieItem, isFromShortsPage = false)
-                            }
-                        },
-                        onMovieClick = { movie, playlist, isFromHotShortTv ->
-                            if (movie.subjectType == 7 || movie.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movie.isStoryTvServer || movie.isFreeReelsServer || (uiState.activeServer == AppServer.SERVER_1 && isFromHotShortTv)) {
-                                viewModel.openShortsPlayer(movie, playlist)
-                            } else {
-                                viewModel.openMovieDetail(movie, playlist = playlist, isFromShortsPage = false)
-                            }
-                        },
-                        onViewMoreClick = { section, isShorts, isLandscape ->
-                            val isHotShortTv = if (uiState.activeServer == AppServer.SERVER_1) {
-                                section.isHotShortTvSection
-                            } else {
-                                section.isHotShortTvSection || isShorts || true
-                            }
-                            viewModel.openSectionPage(section, isShortsSection = isHotShortTv, isLandscape = isLandscape)
-                        },
-                        onToggleServer = { viewModel.toggleServer() },
-                        onSelectServer = { server -> viewModel.switchServer(server) },
-                        onLoadMoreRecommend = { viewModel.loadMoreVskitFilterShorts() },
-                        onSelectLookrCategory = { viewModel.selectLookrCategory(it) },
-                        onSelectLookrSubTag = { viewModel.selectLookrSubTag(it) },
-                        onLoadMoreLookr = { viewModel.loadMoreLookrItems() },
-                        onSelectStoryTvLanguage = { viewModel.selectStoryTvLanguage(it) },
-                        onLoadMoreStoryTv = { viewModel.loadMoreStoryTvItems() },
-                        onLoadMoreFreeReels = { viewModel.loadMoreFreeReelsItems() }
-                    )
-                } else {
-                    HomeMainFeedView(
-                        uiState = uiState,
-                        onOpenSearch = { viewModel.openSearch() },
-                        onOpenDownloads = { viewModel.openDownloads() },
-                        onBannerClick = { banner ->
-                            val movieItem = banner.toMovieItem()
-                            if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
-                                viewModel.openShortsPlayer(movieItem)
-                            } else {
-                                viewModel.openBannerDetail(banner)
-                            }
-                        },
-                        onPlayBanner = { banner ->
-                            val movieItem = banner.toMovieItem()
-                            if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
-                                viewModel.openShortsPlayer(movieItem)
-                            } else {
-                                viewModel.openMovieDetail(movieItem, isFromShortsPage = false)
-                            }
-                        },
-                        onMovieClick = { movie, playlist, isFromHotShortTv ->
-                            if (movie.subjectType == 7 || movie.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movie.isStoryTvServer || movie.isFreeReelsServer || (uiState.activeServer == AppServer.SERVER_1 && isFromHotShortTv)) {
-                                viewModel.openShortsPlayer(movie, playlist)
-                            } else {
-                                viewModel.openMovieDetail(movie, playlist = playlist, isFromShortsPage = false)
-                            }
-                        },
-                        onViewMoreClick = { section, isShorts, isLandscape ->
-                            val isHotShortTv = if (uiState.activeServer == AppServer.SERVER_1) {
-                                section.isHotShortTvSection
-                            } else {
-                                section.isHotShortTvSection || isShorts || true
-                            }
-                            viewModel.openSectionPage(section, isShortsSection = isHotShortTv, isLandscape = isLandscape)
-                        },
-                        onToggleServer = { viewModel.toggleServer() },
-                        onSelectServer = { server -> viewModel.switchServer(server) },
-                        onLoadMoreRecommend = { viewModel.loadMoreVskitFilterShorts() },
-                        onSelectLookrCategory = { viewModel.selectLookrCategory(it) },
-                        onSelectLookrSubTag = { viewModel.selectLookrSubTag(it) },
-                        onLoadMoreLookr = { viewModel.loadMoreLookrItems() },
-                        onSelectStoryTvLanguage = { viewModel.selectStoryTvLanguage(it) },
-                        onLoadMoreStoryTv = { viewModel.loadMoreStoryTvItems() },
-                        onLoadMoreFreeReels = { viewModel.loadMoreFreeReelsItems() }
-                    )
-                }
+                HomeMainFeedView(
+                    uiState = uiState,
+                    onOpenSearch = { viewModel.openSearch() },
+                    onOpenSearchWithQuery = { query -> viewModel.openSearchWithQuery(query) },
+                    onOpenDownloads = { viewModel.openDownloads() },
+                    onBannerClick = { banner ->
+                        val movieItem = banner.toMovieItem()
+                        if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
+                            viewModel.openShortsPlayer(movieItem)
+                        } else {
+                            viewModel.openBannerDetail(banner)
+                        }
+                    },
+                    onPlayBanner = { banner ->
+                        val movieItem = banner.toMovieItem()
+                        if (movieItem.subjectType == 7 || movieItem.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movieItem.isStoryTvServer || movieItem.isFreeReelsServer) {
+                            viewModel.openShortsPlayer(movieItem)
+                        } else {
+                            viewModel.openMovieDetail(movieItem, isFromShortsPage = false)
+                        }
+                    },
+                    onMovieClick = { movie, playlist, isFromHotShortTv ->
+                        if (movie.subjectType == 7 || movie.subjectTypeInfo.isDirectShortsPlayer || uiState.activeServer == AppServer.SERVER_2 || uiState.activeServer == AppServer.SERVER_4 || uiState.activeServer == AppServer.SERVER_5 || movie.isStoryTvServer || movie.isFreeReelsServer || (uiState.activeServer == AppServer.SERVER_1 && isFromHotShortTv)) {
+                            viewModel.openShortsPlayer(movie, playlist)
+                        } else {
+                            viewModel.openMovieDetail(movie, playlist = playlist, isFromShortsPage = false)
+                        }
+                    },
+                    onViewMoreClick = { section, isShorts, isLandscape ->
+                        val isHotShortTv = if (uiState.activeServer == AppServer.SERVER_1) {
+                            section.isHotShortTvSection
+                        } else {
+                            section.isHotShortTvSection || isShorts || true
+                        }
+                        viewModel.openSectionPage(section, isShortsSection = isHotShortTv, isLandscape = isLandscape)
+                    },
+                    onToggleServer = { viewModel.toggleServer() },
+                    onSelectServer = { server -> viewModel.switchServer(server) },
+                    onLoadMoreRecommend = { viewModel.loadMoreVskitFilterShorts() },
+                    onSelectLookrCategory = { viewModel.selectLookrCategory(it) },
+                    onSelectLookrSubTag = { viewModel.selectLookrSubTag(it) },
+                    onLoadMoreLookr = { viewModel.loadMoreLookrItems() },
+                    onSelectStoryTvLanguage = { viewModel.selectStoryTvLanguage(it) },
+                    onLoadMoreStoryTv = { viewModel.loadMoreStoryTvItems() },
+                    onLoadMoreFreeReels = { viewModel.loadMoreFreeReelsItems() }
+                )
             }
 
             is AppScreen.Downloads -> {
@@ -241,6 +196,7 @@ fun HomeScreen(
             is AppScreen.Search -> {
                 if (uiState.activeServer == AppServer.SERVER_6) {
                     JioSaavnSearchScreen(
+                        initialQuery = uiState.searchQuery.ifBlank { null },
                         onBackClick = { viewModel.navigateBack() }
                     )
                 } else {
@@ -350,6 +306,7 @@ fun HomeScreen(
 private fun HomeMainFeedView(
     uiState: HomeUiState,
     onOpenSearch: () -> Unit,
+    onOpenSearchWithQuery: (String) -> Unit = {},
     onOpenDownloads: () -> Unit,
     onBannerClick: (com.example.data.model.HeroBanner) -> Unit,
     onPlayBanner: (com.example.data.model.HeroBanner) -> Unit,
@@ -424,132 +381,155 @@ private fun HomeMainFeedView(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    when (uiState.activeServer) {
-                        AppServer.SERVER_6 -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.Transparent,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                AsyncImage(
-                                    model = ImageRequest.Builder(LocalContext.current)
-                                        .data(AppServer.SERVER_6.logoUrl)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = "JioSaavn Logo",
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                )
-                            }
-                        }
-                        AppServer.SERVER_5 -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.Transparent,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                AsyncImage(
-                                    model = ImageRequest.Builder(LocalContext.current)
-                                        .data(AppServer.SERVER_5.logoUrl)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = "FreeReels Logo",
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                )
-                            }
-                        }
-                        AppServer.SERVER_4 -> {
-                            // Story TV Wide Logo (Logo already contains "Story TV" text)
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(AppServer.SERVER_4.logoUrl)
-                                    .decoderFactory(SvgDecoder.Factory())
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = "Story TV Logo",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .widthIn(min = 120.dp, max = 160.dp)
+                    var isServerBrandFocused by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .onFocusChanged { isServerBrandFocused = it.isFocused }
+                            .focusable()
+                            .border(
+                                width = if (isServerBrandFocused) 2.dp else 0.dp,
+                                color = if (isServerBrandFocused) Color.White else Color.Transparent,
+                                shape = RoundedCornerShape(8.dp)
                             )
-                        }
-                        AppServer.SERVER_3 -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.Transparent,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                AsyncImage(
-                                    model = ImageRequest.Builder(LocalContext.current)
-                                        .data(AppServer.SERVER_3.logoUrl)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = "Lookr Logo",
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .padding(2.dp)
-                                )
+                            .clickable { isServerMenuOpen = true }
+                            .padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        when (uiState.activeServer) {
+                            AppServer.SERVER_6 -> {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(AppServer.SERVER_6.logoUrl)
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "JioSaavn Logo",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                    )
+                                }
                             }
-                        }
-                        AppServer.SERVER_2 -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.Transparent,
-                                modifier = Modifier.size(34.dp)
-                            ) {
+                            AppServer.SERVER_5 -> {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(AppServer.SERVER_5.logoUrl)
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "FreeReels Logo",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                    )
+                                }
+                            }
+                            AppServer.SERVER_4 -> {
+                                // Story TV Wide Logo (Logo already contains "Story TV" text)
                                 AsyncImage(
                                     model = ImageRequest.Builder(LocalContext.current)
-                                        .data("https://vskit.online/logo.svg")
+                                        .data(AppServer.SERVER_4.logoUrl)
                                         .decoderFactory(SvgDecoder.Factory())
                                         .crossfade(true)
                                         .build(),
-                                    contentDescription = "VSKit Logo",
+                                    contentDescription = "Story TV Logo",
                                     contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .widthIn(min = 120.dp, max = 160.dp)
+                                )
+                            }
+                            AppServer.SERVER_3 -> {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(AppServer.SERVER_3.logoUrl)
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "Lookr Logo",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .padding(2.dp)
+                                    )
+                                }
+                            }
+                            AppServer.SERVER_2 -> {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data("https://vskit.online/logo.svg")
+                                            .decoderFactory(SvgDecoder.Factory())
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "VSKit Logo",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .padding(2.dp)
+                                    )
+                                }
+                            }
+                            AppServer.SERVER_1 -> {
+                                // MovieBox App Logo
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_moviebox_logo),
+                                    contentDescription = "MovieBox Logo",
                                     modifier = Modifier
                                         .size(34.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .padding(2.dp)
                                 )
                             }
                         }
-                        AppServer.SERVER_1 -> {
-                            // MovieBox App Logo
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_moviebox_logo),
-                                contentDescription = "MovieBox Logo",
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+
+                        if (uiState.activeServer != AppServer.SERVER_4) {
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            Text(
+                                text = uiState.activeServer.title,
+                                color = Color.White,
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = (-0.5).sp
                             )
                         }
-                    }
-
-                    if (uiState.activeServer != AppServer.SERVER_4) {
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        Text(
-                            text = uiState.activeServer.title,
-                            color = Color.White,
-                            fontSize = 21.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = (-0.5).sp
-                        )
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
 
                     // Dedicated Search Page Button (Square with 10dp rounded corners)
+                    var isSearchBtnFocused by remember { mutableStateOf(false) }
                     IconButton(
                         onClick = onOpenSearch,
                         modifier = Modifier
                             .size(38.dp)
+                            .onFocusChanged { isSearchBtnFocused = it.isFocused }
+                            .focusable()
+                            .border(
+                                width = if (isSearchBtnFocused) 2.dp else 0.dp,
+                                color = if (isSearchBtnFocused) Color.White else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
+                            )
                             .clip(RoundedCornerShape(10.dp))
                             .background(DarkSurfaceVariant)
                             .testTag("search_toggle_button")
@@ -565,10 +545,18 @@ private fun HomeMainFeedView(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     // Dedicated Downloads Page Button (Right of Search Icon)
+                    var isDownloadsBtnFocused by remember { mutableStateOf(false) }
                     IconButton(
                         onClick = onOpenDownloads,
                         modifier = Modifier
                             .size(38.dp)
+                            .onFocusChanged { isDownloadsBtnFocused = it.isFocused }
+                            .focusable()
+                            .border(
+                                width = if (isDownloadsBtnFocused) 2.dp else 0.dp,
+                                color = if (isDownloadsBtnFocused) Color.White else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
+                            )
                             .clip(RoundedCornerShape(10.dp))
                             .background(DarkSurfaceVariant)
                             .testTag("home_downloads_button")
@@ -791,7 +779,9 @@ private fun HomeMainFeedView(
                 // ==========================================
                 // SERVER 6: JIOSAAVN MUSIC SERVER LAYOUT
                 // ==========================================
-                JioSaavnServerView()
+                JioSaavnServerView(
+                    onOpenSearchWithQuery = onOpenSearchWithQuery
+                )
             }
             AppServer.SERVER_5 -> {
                 // ==========================================
@@ -964,58 +954,7 @@ private fun HomeMainFeedView(
                 onSelectServer = { server ->
                     onSelectServer(server)
                     isServerMenuOpen = false
-                },
-                onClose = { isServerMenuOpen = false }
-            )
-        }
-
-        // Floating Circular Server Choose / Exit Button
-        ServerSwitchFloatingButton(
-            isMenuOpen = isServerMenuOpen,
-            onClick = {
-                isServerMenuOpen = !isServerMenuOpen
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(end = 16.dp, bottom = 88.dp)
-        )
-    }
-}
-
-/**
- * Floating Circular Server Switch / Exit Button:
- * - Circle shape (CircleShape)
- * - Mouse hand choose icon (Icons.Default.TouchApp) when closed
- * - Exit symbol (Icons.Default.Close) when menu is active/open
- * - Clicking toggles right side choose menu
- */
-@Composable
-fun ServerSwitchFloatingButton(
-    isMenuOpen: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        shape = CircleShape, // Strictly Circle Shape as requested
-        color = if (isMenuOpen) Color(0xFF23272F) else Color(0xFFE50914),
-        shadowElevation = 8.dp,
-        tonalElevation = 4.dp,
-        border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.45f)),
-        modifier = modifier
-            .size(54.dp)
-            .testTag("server_switch_floating_circle_button")
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isMenuOpen) Icons.Default.Close else Icons.Default.TouchApp,
-                contentDescription = if (isMenuOpen) "Exit Server Menu" else "Choose Server",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp)
+                }
             )
         }
     }
@@ -1028,13 +967,11 @@ fun ServerSwitchFloatingButton(
  * - Background transparency: strictly 70% (Color.Black.copy(alpha = 0.70f))
  * - Single column (vertical choose menu)
  * - Square shape server items with server icon and server name
- * - Circle exit button
  */
 @Composable
 fun ServerChooseRightDrawer(
     activeServer: AppServer,
     onSelectServer: (AppServer) -> Unit,
-    onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -1069,9 +1006,6 @@ fun ServerChooseRightDrawer(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
-
-            // Bottom clearance so content is never covered by bottom button
-            Spacer(modifier = Modifier.height(72.dp))
         }
     }
 }
@@ -1085,17 +1019,28 @@ private fun ServerSquareItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val borderColor = if (isSelected) Color(0xFFE50914) else Color.White.copy(alpha = 0.18f)
-    val bgColor = if (isSelected) Color(0xFFE50914).copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f)
+    var isFocused by remember { mutableStateOf(false) }
+    val borderColor = when {
+        isFocused -> Color.White
+        isSelected -> Color(0xFFE50914)
+        else -> Color.White.copy(alpha = 0.18f)
+    }
+    val bgColor = when {
+        isFocused -> Color(0xFFE50914).copy(alpha = 0.45f)
+        isSelected -> Color(0xFFE50914).copy(alpha = 0.28f)
+        else -> Color.White.copy(alpha = 0.08f)
+    }
 
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp), // Square shape container
         color = bgColor,
-        border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor),
+        border = BorderStroke(if (isFocused || isSelected) 2.dp else 1.dp, borderColor),
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f) // Strictly Square Shape
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
             .testTag("server_item_${server.id}")
     ) {
         Column(

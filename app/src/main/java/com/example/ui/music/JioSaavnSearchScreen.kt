@@ -90,6 +90,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceBorder
 import com.example.ui.theme.DarkSurfaceVariant
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
@@ -120,6 +121,7 @@ private val SEARCH_FILTERS = listOf("All", "Songs", "Albums", "Playlists", "Arti
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JioSaavnSearchScreen(
+    initialQuery: String? = null,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -132,8 +134,9 @@ fun JioSaavnSearchScreen(
     val isPlaying by playerManager.isPlaying.collectAsState()
     val favoriteSongIds by playerManager.favoriteSongIds.collectAsState()
     val downloadedSongs by downloadManager.downloadedSongs.collectAsState()
+    val activeDownloads by downloadManager.activeDownloads.collectAsState()
 
-    var searchQuery by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf(initialQuery ?: "") }
     var selectedFilter by remember { mutableStateOf("All") }
     var isSearching by remember { mutableStateOf(false) }
 
@@ -142,8 +145,15 @@ fun JioSaavnSearchScreen(
     var searchPlaylistResults by remember { mutableStateOf<List<SaavnPlaylistItem>>(emptyList()) }
     var searchArtistResults by remember { mutableStateOf<List<SaavnArtistItem>>(emptyList()) }
 
+    var songCurrentPage by remember { mutableStateOf(1) }
+    var totalSongsAvailable by remember { mutableStateOf(0) }
+    var isLoadingMoreSongs by remember { mutableStateOf(false) }
+    var canLoadMoreSongs by remember { mutableStateOf(true) }
+    var currentSearchJob by remember { mutableStateOf<Job?>(null) }
+
     var selectedAlbum by remember { mutableStateOf<SaavnAlbumItem?>(null) }
     var selectedPlaylist by remember { mutableStateOf<SaavnPlaylistItem?>(null) }
+    var selectedArtist by remember { mutableStateOf<SaavnArtistItem?>(null) }
     var tracklistSongs by remember { mutableStateOf<List<SaavnSongItem>>(emptyList()) }
     var isTracklistLoading by remember { mutableStateOf(false) }
 
@@ -156,48 +166,128 @@ fun JioSaavnSearchScreen(
         onBackClick()
     }
 
-    LaunchedEffect(Unit) {
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {}
-    }
-
     fun executeSearch(query: String, filter: String = selectedFilter) {
+        currentSearchJob?.cancel()
         if (query.isBlank()) {
             searchSongResults = emptyList()
             searchAlbumResults = emptyList()
             searchPlaylistResults = emptyList()
             searchArtistResults = emptyList()
+            totalSongsAvailable = 0
+            songCurrentPage = 1
+            canLoadMoreSongs = false
             isSearching = false
             return
         }
-        coroutineScope.launch {
+        currentSearchJob = coroutineScope.launch {
             isSearching = true
+            songCurrentPage = 1
+            canLoadMoreSongs = true
             when (filter) {
                 "Songs" -> {
-                    searchSongResults = JioSaavnApiClient.searchSongs(query, page = 1, limit = 30)
+                    // Fetch first 3 pages in parallel for deep results (up to 120-150 songs right away, no 30 cap!)
+                    val page1Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 1, limit = 50) }
+                    val page2Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 2, limit = 50) }
+                    val page3Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 3, limit = 50) }
+                    val (p1Songs, total) = page1Def.await()
+                    val (p2Songs, _) = page2Def.await()
+                    val (p3Songs, _) = page3Def.await()
+                    val combined = (p1Songs + p2Songs + p3Songs).distinctBy { it.id }
+                    searchSongResults = combined
+                    totalSongsAvailable = total
+                    songCurrentPage = when {
+                        p3Songs.isNotEmpty() -> 3
+                        p2Songs.isNotEmpty() -> 2
+                        else -> 1
+                    }
+                    canLoadMoreSongs = (combined.size < total || total == 0) && (p3Songs.isNotEmpty() || p2Songs.isNotEmpty() || p1Songs.isNotEmpty())
                 }
                 "Albums" -> {
-                    searchAlbumResults = JioSaavnApiClient.searchAlbums(query, page = 1, limit = 20)
+                    val a1Def = async { JioSaavnApiClient.searchAlbums(query, page = 1, limit = 50) }
+                    val a2Def = async { JioSaavnApiClient.searchAlbums(query, page = 2, limit = 50) }
+                    searchAlbumResults = (a1Def.await() + a2Def.await()).distinctBy { it.id }
                 }
                 "Playlists" -> {
-                    searchPlaylistResults = JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 20)
+                    val pl1Def = async { JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 50) }
+                    val pl2Def = async { JioSaavnApiClient.searchPlaylists(query, page = 2, limit = 50) }
+                    searchPlaylistResults = (pl1Def.await() + pl2Def.await()).distinctBy { it.id }
                 }
                 "Artists" -> {
-                    searchArtistResults = JioSaavnApiClient.searchArtists(query, page = 1, limit = 20)
+                    val ar1Def = async { JioSaavnApiClient.searchArtists(query, page = 1, limit = 50) }
+                    val ar2Def = async { JioSaavnApiClient.searchArtists(query, page = 2, limit = 50) }
+                    searchArtistResults = (ar1Def.await() + ar2Def.await()).distinctBy { it.id }
                 }
                 else -> {
-                    val songsDef = async { JioSaavnApiClient.searchSongs(query, page = 1, limit = 30) }
-                    val albumsDef = async { JioSaavnApiClient.searchAlbums(query, page = 1, limit = 15) }
-                    val playlistsDef = async { JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 15) }
-                    val artistsDef = async { JioSaavnApiClient.searchArtists(query, page = 1, limit = 15) }
-                    searchSongResults = songsDef.await()
+                    // "All" filter: Fetch songs page 1, 2, 3 in parallel + albums + playlists + artists
+                    val songsP1Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 1, limit = 50) }
+                    val songsP2Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 2, limit = 50) }
+                    val songsP3Def = async { JioSaavnApiClient.searchSongsWithTotal(query, page = 3, limit = 50) }
+                    val albumsDef = async { JioSaavnApiClient.searchAlbums(query, page = 1, limit = 50) }
+                    val playlistsDef = async { JioSaavnApiClient.searchPlaylists(query, page = 1, limit = 50) }
+                    val artistsDef = async { JioSaavnApiClient.searchArtists(query, page = 1, limit = 50) }
+
+                    val (p1Songs, total) = songsP1Def.await()
+                    val (p2Songs, _) = songsP2Def.await()
+                    val (p3Songs, _) = songsP3Def.await()
+                    val combinedSongs = (p1Songs + p2Songs + p3Songs).distinctBy { it.id }
+
+                    searchSongResults = combinedSongs
+                    totalSongsAvailable = total
+                    songCurrentPage = when {
+                        p3Songs.isNotEmpty() -> 3
+                        p2Songs.isNotEmpty() -> 2
+                        else -> 1
+                    }
+                    canLoadMoreSongs = (combinedSongs.size < total || total == 0) && (p3Songs.isNotEmpty() || p2Songs.isNotEmpty() || p1Songs.isNotEmpty())
+
                     searchAlbumResults = albumsDef.await()
                     searchPlaylistResults = playlistsDef.await()
                     searchArtistResults = artistsDef.await()
                 }
             }
             isSearching = false
+        }
+    }
+
+    fun loadMoreSongs() {
+        if (isLoadingMoreSongs || !canLoadMoreSongs || searchQuery.isBlank() || isSearching) return
+        coroutineScope.launch {
+            isLoadingMoreSongs = true
+            val pageA = songCurrentPage + 1
+            val pageB = songCurrentPage + 2
+            val p1Def = async { JioSaavnApiClient.searchSongsWithTotal(searchQuery, page = pageA, limit = 50) }
+            val p2Def = async { JioSaavnApiClient.searchSongsWithTotal(searchQuery, page = pageB, limit = 50) }
+            val (p1Songs, total) = p1Def.await()
+            val (p2Songs, _) = p2Def.await()
+            val newSongs = p1Songs + p2Songs
+            if (newSongs.isEmpty()) {
+                canLoadMoreSongs = false
+            } else {
+                val existingIds = searchSongResults.map { it.id }.toSet()
+                val filtered = newSongs.filter { it.id !in existingIds }
+                if (filtered.isEmpty()) {
+                    canLoadMoreSongs = false
+                } else {
+                    searchSongResults = searchSongResults + filtered
+                    songCurrentPage = if (p2Songs.isNotEmpty()) pageB else pageA
+                    totalSongsAvailable = total
+                    if (total > 0 && searchSongResults.size >= total) {
+                        canLoadMoreSongs = false
+                    }
+                }
+            }
+            isLoadingMoreSongs = false
+        }
+    }
+
+    LaunchedEffect(initialQuery) {
+        if (!initialQuery.isNullOrBlank()) {
+            searchQuery = initialQuery
+            executeSearch(initialQuery)
+        } else {
+            try {
+                focusRequester.requestFocus()
+            } catch (_: Exception) {}
         }
     }
 
@@ -215,6 +305,20 @@ fun JioSaavnSearchScreen(
         isTracklistLoading = true
         coroutineScope.launch {
             tracklistSongs = JioSaavnApiClient.getPlaylistDetails(playlist.id)
+            isTracklistLoading = false
+        }
+    }
+
+    fun openArtist(artist: SaavnArtistItem) {
+        selectedArtist = artist
+        isTracklistLoading = true
+        coroutineScope.launch {
+            val discography = if (artist.id.isNotBlank()) JioSaavnApiClient.getArtistPageDetails(artist.id) else null
+            if (discography != null && discography.topSongs.isNotEmpty()) {
+                tracklistSongs = discography.topSongs
+            } else {
+                tracklistSongs = JioSaavnApiClient.searchSongs(artist.name, page = 1, limit = 50)
+            }
             isTracklistLoading = false
         }
     }
@@ -553,11 +657,7 @@ fun JioSaavnSearchScreen(
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable {
-                                                    searchQuery = cleanArtistName
-                                                    selectedFilter = "Songs"
-                                                    executeSearch(cleanArtistName, "Songs")
-                                                }
+                                                .clickable { openArtist(artist) }
                                                 .padding(vertical = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -593,7 +693,23 @@ fun JioSaavnSearchScreen(
                                 if (searchSongResults.isEmpty()) {
                                     item { SearchNoResultsView(query = searchQuery) }
                                 } else {
+                                    item {
+                                        Text(
+                                            text = if (totalSongsAvailable > 0) "Songs (${searchSongResults.size} of $totalSongsAvailable)" else "Songs (${searchSongResults.size})",
+                                            color = Color.White,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+                                        )
+                                    }
+
                                     itemsIndexed(searchSongResults) { idx, song ->
+                                        if (idx >= searchSongResults.size - 4 && canLoadMoreSongs && !isLoadingMoreSongs && !isSearching) {
+                                            LaunchedEffect(idx) {
+                                                loadMoreSongs()
+                                            }
+                                        }
+
                                         val isCurrent = (currentSong?.id == song.id && isPlaying)
                                         val isFav = favoriteSongIds.contains(song.id)
 
@@ -646,13 +762,56 @@ fun JioSaavnSearchScreen(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                             }
-                                            IconButton(onClick = { playerManager.toggleFavorite(song.id) }) {
-                                                Icon(
-                                                    imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                    contentDescription = "Favorite",
-                                                    tint = if (isFav) Color(0xFFFF2A55) else SearchTextMuted,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
+                                            val isSongDownloaded = downloadedSongs.any { it.id == song.id }
+                                            val songDownloadProgress = activeDownloads[song.id]
+
+                                            if (songDownloadProgress != null) {
+                                                Box(
+                                                    contentAlignment = Alignment.Center,
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        progress = { songDownloadProgress / 100f },
+                                                        color = SearchTeal,
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                }
+                                            } else if (isSongDownloaded) {
+                                                IconButton(
+                                                    onClick = {
+                                                        Toast.makeText(context, "Song downloaded for offline playback", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CheckCircle,
+                                                        contentDescription = "Downloaded",
+                                                        tint = SearchTeal,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                IconButton(
+                                                    onClick = {
+                                                        Toast.makeText(context, "Downloading ${song.title}...", Toast.LENGTH_SHORT).show()
+                                                        downloadManager.downloadSong(song) { success ->
+                                                            if (success) {
+                                                                Toast.makeText(context, "Downloaded: ${song.title}", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Download,
+                                                        contentDescription = "Download Song",
+                                                        tint = SearchTextMuted,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
                                             }
                                             IconButton(onClick = { selectedSongOptions = song }) {
                                                 Icon(
@@ -660,6 +819,81 @@ fun JioSaavnSearchScreen(
                                                     contentDescription = "Options",
                                                     tint = SearchTextMuted,
                                                     modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Loading / Load More footer
+                                    if (isLoadingMoreSongs) {
+                                        item {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 16.dp),
+                                                horizontalArrangement = Arrangement.Center,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    color = SaavnTeal,
+                                                    modifier = Modifier.size(20.dp),
+                                                    strokeWidth = 2.dp
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = "Loading more songs...",
+                                                    color = SearchTextMuted,
+                                                    fontSize = 13.sp
+                                                )
+                                            }
+                                        }
+                                    } else if (canLoadMoreSongs) {
+                                        item {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 12.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(20.dp),
+                                                    color = DarkSurfaceVariant,
+                                                    border = BorderStroke(1.dp, SaavnTeal.copy(alpha = 0.4f)),
+                                                    modifier = Modifier.clickable { loadMoreSongs() }
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Search,
+                                                            contentDescription = "Load More",
+                                                            tint = SaavnTeal,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = if (totalSongsAvailable > 0) "Load More Songs (${searchSongResults.size} of $totalSongsAvailable)" else "Load More Songs",
+                                                            color = Color.White,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if (searchSongResults.isNotEmpty()) {
+                                        item {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 16.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "Showing all ${searchSongResults.size} search results",
+                                                    color = SearchTextMuted.copy(alpha = 0.7f),
+                                                    fontSize = 12.sp
                                                 )
                                             }
                                         }
@@ -696,11 +930,7 @@ fun JioSaavnSearchScreen(
                                                             horizontalAlignment = Alignment.CenterHorizontally,
                                                             modifier = Modifier
                                                                 .width(76.dp)
-                                                                .clickable {
-                                                                    searchQuery = cleanArtistName
-                                                                    selectedFilter = "Songs"
-                                                                    executeSearch(cleanArtistName, "Songs")
-                                                                }
+                                                                .clickable { openArtist(artist) }
                                                         ) {
                                                             AsyncImage(
                                                                 model = artist.image,
@@ -842,7 +1072,7 @@ fun JioSaavnSearchScreen(
                                     if (searchSongResults.isNotEmpty()) {
                                         item {
                                             Text(
-                                                text = "Songs",
+                                                text = if (totalSongsAvailable > 0) "Songs (${searchSongResults.size} of $totalSongsAvailable)" else "Songs (${searchSongResults.size})",
                                                 color = Color.White,
                                                 fontSize = 17.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -851,6 +1081,12 @@ fun JioSaavnSearchScreen(
                                         }
 
                                         itemsIndexed(searchSongResults) { idx, song ->
+                                            if (idx >= searchSongResults.size - 4 && canLoadMoreSongs && !isLoadingMoreSongs && !isSearching) {
+                                                LaunchedEffect(idx) {
+                                                    loadMoreSongs()
+                                                }
+                                            }
+
                                             val isCurrent = (currentSong?.id == song.id && isPlaying)
                                             val isFav = favoriteSongIds.contains(song.id)
 
@@ -908,16 +1144,56 @@ fun JioSaavnSearchScreen(
                                                     )
                                                 }
 
-                                                IconButton(
-                                                    onClick = { playerManager.toggleFavorite(song.id) },
-                                                    modifier = Modifier.size(34.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                        contentDescription = "Favorite",
-                                                        tint = if (isFav) Color(0xFFEF4444) else SearchTextMuted.copy(alpha = 0.7f),
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
+                                                val isSongDownloaded = downloadedSongs.any { it.id == song.id }
+                                                val songDownloadProgress = activeDownloads[song.id]
+
+                                                if (songDownloadProgress != null) {
+                                                    Box(
+                                                        contentAlignment = Alignment.Center,
+                                                        modifier = Modifier.size(34.dp)
+                                                    ) {
+                                                        CircularProgressIndicator(
+                                                            progress = { songDownloadProgress / 100f },
+                                                            color = SearchTeal,
+                                                            modifier = Modifier.size(20.dp),
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    }
+                                                } else if (isSongDownloaded) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            Toast.makeText(context, "Song downloaded for offline playback", Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        modifier = Modifier.size(34.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CheckCircle,
+                                                            contentDescription = "Downloaded",
+                                                            tint = SearchTeal,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                } else {
+                                                    IconButton(
+                                                        onClick = {
+                                                            Toast.makeText(context, "Downloading ${song.title}...", Toast.LENGTH_SHORT).show()
+                                                            downloadManager.downloadSong(song) { success ->
+                                                                if (success) {
+                                                                    Toast.makeText(context, "Downloaded: ${song.title}", Toast.LENGTH_SHORT).show()
+                                                                } else {
+                                                                    Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        },
+                                                        modifier = Modifier.size(34.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Download,
+                                                            contentDescription = "Download Song",
+                                                            tint = SearchTextMuted.copy(alpha = 0.8f),
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
                                                 }
 
                                                 IconButton(
@@ -929,6 +1205,81 @@ fun JioSaavnSearchScreen(
                                                         contentDescription = "More",
                                                         tint = SearchTextMuted.copy(alpha = 0.7f),
                                                         modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Loading / Load More footer for All filter
+                                        if (isLoadingMoreSongs) {
+                                            item {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 16.dp),
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        color = SaavnTeal,
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(
+                                                        text = "Loading more songs...",
+                                                        color = SearchTextMuted,
+                                                        fontSize = 13.sp
+                                                    )
+                                                }
+                                            }
+                                        } else if (canLoadMoreSongs) {
+                                            item {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 12.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(20.dp),
+                                                        color = DarkSurfaceVariant,
+                                                        border = BorderStroke(1.dp, SaavnTeal.copy(alpha = 0.4f)),
+                                                        modifier = Modifier.clickable { loadMoreSongs() }
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Search,
+                                                                contentDescription = "Load More",
+                                                                tint = SaavnTeal,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                            Text(
+                                                                text = if (totalSongsAvailable > 0) "Load More Songs (${searchSongResults.size} of $totalSongsAvailable)" else "Load More Songs",
+                                                                color = Color.White,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else if (searchSongResults.isNotEmpty()) {
+                                            item {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 16.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = "Showing all ${searchSongResults.size} search results",
+                                                        color = SearchTextMuted.copy(alpha = 0.7f),
+                                                        fontSize = 12.sp
                                                     )
                                                 }
                                             }
@@ -1052,47 +1403,22 @@ fun JioSaavnSearchScreen(
                         Text("Add to Queue", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     }
 
-                    val isFav = favoriteSongIds.contains(song.id)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                playerManager.toggleFavorite(song.id)
-                                selectedSongOptions = null
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorite",
-                            tint = if (isFav) Color(0xFFEF4444) else Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            if (isFav) "Remove from Favorites" else "Add to Favorites",
-                            color = if (isFav) Color(0xFFEF4444) else Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
                     Spacer(modifier = Modifier.height(30.dp))
                 }
             }
         }
 
-        // Tracklist Bottom Sheet
-        if (selectedAlbum != null || selectedPlaylist != null) {
-            val title = selectedAlbum?.title ?: selectedPlaylist?.title ?: "Tracklist"
-            val subtitle = selectedAlbum?.artist ?: selectedPlaylist?.subtitle ?: "JioSaavn"
-            val cover = selectedAlbum?.image ?: selectedPlaylist?.image ?: ""
+        // Tracklist Bottom Sheet (Album, Playlist, Artist)
+        if (selectedAlbum != null || selectedPlaylist != null || selectedArtist != null) {
+            val title = selectedArtist?.name ?: selectedAlbum?.title ?: selectedPlaylist?.title ?: "Tracklist"
+            val subtitle = if (selectedArtist != null) "Artist • Top Songs & Discography" else (selectedAlbum?.artist ?: selectedPlaylist?.subtitle ?: "JioSaavn")
+            val cover = selectedArtist?.image ?: selectedAlbum?.image ?: selectedPlaylist?.image ?: ""
 
             ModalBottomSheet(
                 onDismissRequest = {
                     selectedAlbum = null
                     selectedPlaylist = null
+                    selectedArtist = null
                     tracklistSongs = emptyList()
                 },
                 containerColor = Color(0xFF1E293B)
@@ -1221,16 +1547,56 @@ fun JioSaavnSearchScreen(
                                         )
                                     }
 
-                                    IconButton(
-                                        onClick = { playerManager.toggleFavorite(song.id) },
-                                        modifier = Modifier.size(34.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                            contentDescription = "Favorite",
-                                            tint = if (isFav) Color(0xFFEF4444) else SearchTextMuted.copy(alpha = 0.7f),
-                                            modifier = Modifier.size(20.dp)
-                                        )
+                                    val isSongDownloaded = downloadedSongs.any { it.id == song.id }
+                                    val songDownloadProgress = activeDownloads[song.id]
+
+                                    if (songDownloadProgress != null) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                progress = { songDownloadProgress / 100f },
+                                                color = SearchTeal,
+                                                modifier = Modifier.size(20.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                        }
+                                    } else if (isSongDownloaded) {
+                                        IconButton(
+                                            onClick = {
+                                                Toast.makeText(context, "Song downloaded for offline playback", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Downloaded",
+                                                tint = SearchTeal,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = {
+                                                Toast.makeText(context, "Downloading ${song.title}...", Toast.LENGTH_SHORT).show()
+                                                downloadManager.downloadSong(song) { success ->
+                                                    if (success) {
+                                                        Toast.makeText(context, "Downloaded: ${song.title}", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "Download Song",
+                                                tint = SearchTextMuted.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }

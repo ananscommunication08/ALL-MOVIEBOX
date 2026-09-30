@@ -17,7 +17,8 @@ data class MediaItem(
     val language: String = "",
     val followerCount: Long = 0,
     val songCount: Int = 0,
-    val encryptedMediaUrl: String = ""
+    val encryptedMediaUrl: String = "",
+    val badge: String = ""
 ) : Serializable {
     fun getHighQualityImage(): String {
         return imageUrl
@@ -27,6 +28,8 @@ data class MediaItem(
             .replace("50x50.png", "500x500.png")
             .replace("150x150.webp", "500x500.webp")
             .replace("50x50.webp", "500x500.webp")
+            .replace("150x150", "500x500")
+            .replace("50x50", "500x500")
             .replace("http://", "https://")
     }
 
@@ -103,12 +106,36 @@ data class SaavnArtistItem(
     val id: String,
     val name: String,
     val image: String = "",
-    val role: String = ""
+    val role: String = "",
+    val followerCount: String = "",
+    val isVerified: Boolean = true
+) : Serializable
+
+data class ArtistDiscography(
+    val artistId: String = "",
+    val artistName: String = "",
+    val subtitle: String = "",
+    val artistImage: String = "",
+    val followerCount: String = "",
+    val isVerified: Boolean = true,
+    val topSongs: List<SaavnSongItem> = emptyList(),
+    val topAlbums: List<SaavnAlbumItem> = emptyList()
 ) : Serializable
 
 data class SaavnHomeData(
-    val trendingItems: List<MediaItem> = emptyList(),
+    val trendingNow: List<MediaItem> = emptyList(),
+    val editorialPicks: List<MediaItem> = emptyList(),
+    val popHindiItems: List<MediaItem> = emptyList(),
+    val topArtists: List<SaavnArtistItem> = emptyList(),
+    val newTrendingAlbums: List<MediaItem> = emptyList(),
+    val freeHits: List<MediaItem> = emptyList(),
     val topCharts: List<MediaItem> = emptyList(),
+    val devotional: List<MediaItem> = emptyList(),
+    val bestOf90s: List<MediaItem> = emptyList(),
+    val genresAndMoods: List<MediaItem> = emptyList(),
+
+    // Legacy fields for backward compatibility
+    val trendingItems: List<MediaItem> = emptyList(),
     val featuredPlaylists: List<MediaItem> = emptyList(),
     val newReleases: List<MediaItem> = emptyList(),
     val chartToppers: List<SaavnSongItem> = emptyList(),

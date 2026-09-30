@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,23 +53,35 @@ class MainActivity : ComponentActivity() {
             .cache(Cache(applicationContext.cacheDir.resolve("http_image_cache"), 150L * 1024 * 1024))
             .build()
 
+        val isTv = com.example.util.DeviceUtils.isAndroidTv(applicationContext)
+        if (isTv) {
+            try {
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } catch (_: Exception) {}
+        } else {
+            try {
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } catch (_: Exception) {}
+        }
         val imageLoader = ImageLoader.Builder(applicationContext)
             .okHttpClient(imageOkHttpClient)
+            .components {
+                add(coil.decode.SvgDecoder.Factory())
+            }
             .memoryCache {
                 MemoryCache.Builder(applicationContext)
-                    .maxSizePercent(0.35)
+                    .maxSizePercent(if (isTv) 0.20 else 0.35)
                     .strongReferencesEnabled(true)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(applicationContext.cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(250L * 1024 * 1024)
+                    .maxSizeBytes(200L * 1024 * 1024)
                     .build()
             }
             .allowHardware(true)
-            .allowRgb565(true)
-            .crossfade(120)
+            .crossfade(false)
             .respectCacheHeaders(false)
             .build()
         Coil.setImageLoader(imageLoader)
@@ -79,11 +92,17 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = DarkBackground
                 ) {
+                    val uiState by homeViewModel.uiState.collectAsState()
                     var isSplashVisible by remember { mutableStateOf(true) }
 
-                    LaunchedEffect(Unit) {
-                        delay(2300)
-                        isSplashVisible = false
+                    LaunchedEffect(uiState.isLoading) {
+                        if (!uiState.isLoading) {
+                            delay(180)
+                            isSplashVisible = false
+                        } else {
+                            delay(500)
+                            isSplashVisible = false
+                        }
                     }
 
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -94,7 +113,7 @@ class MainActivity : ComponentActivity() {
                         AnimatedVisibility(
                             visible = isSplashVisible,
                             enter = fadeIn(),
-                            exit = fadeOut(animationSpec = tween(400))
+                            exit = fadeOut(animationSpec = tween(300))
                         ) {
                             SplashScreen()
                         }

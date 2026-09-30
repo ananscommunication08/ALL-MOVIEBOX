@@ -479,9 +479,17 @@ fun ShortsReelPlayer(
                 }
             }
         } else if (isVskit) {
-            val eps = VskitShortsApiClient.fetchShortsEpisodes(subjectId)
-            if (eps.isNotEmpty()) {
-                vskitEpisodes = eps
+            launch(Dispatchers.IO) {
+                try {
+                    val eps = VskitShortsApiClient.fetchShortsEpisodes(subjectId)
+                    if (eps.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            vskitEpisodes = eps
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("ShortsReelPlayer", "Error loading Vskit episodes", e)
+                }
             }
         } else if (movie.source.equals("lookr", ignoreCase = true)) {
             val res = LookrApiClient.fetchSubjectDetail(
@@ -604,15 +612,30 @@ fun ShortsReelPlayer(
         pageCount = { safeList.size }
     )
 
-    // Enforce Portrait Orientation and Hide System UI while in Shorts Fullscreen
-    DisposableEffect(Unit) {
+    // Enforce Orientation and Hide System UI while in Shorts Fullscreen
+    // CRITICAL: On TV keep in Landscape (16:9). On Mobile keep in Portrait (9:16) and restore Portrait on exit!
+    val isTvDevice = remember { com.example.util.DeviceUtils.isAndroidTv(context) }
+
+    DisposableEffect(isTvDevice) {
         activity?.runOnUiThread {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            try {
+                if (isTvDevice) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                } else {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+            } catch (_: Exception) {}
             hideSystemUI(activity)
         }
         onDispose {
             activity?.runOnUiThread {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                try {
+                    if (isTvDevice) {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    }
+                } catch (_: Exception) {}
                 showSystemUI(activity)
             }
         }
@@ -634,7 +657,12 @@ fun ShortsReelPlayer(
     var showChooseEpisodeModal by remember { mutableStateOf(false) }
     val streamCache = remember { mutableMapOf<String, CachedShortStream>() }
     var userManualQualityOverride by remember { mutableStateOf<String?>(null) }
-    var resizeMode by remember { mutableStateOf(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
+    var resizeMode by remember {
+        mutableStateOf(
+            if (isTvDevice) AspectRatioFrameLayout.RESIZE_MODE_FIT
+            else AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        )
+    }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var isSeeking by remember { mutableStateOf(false) }
@@ -647,6 +675,20 @@ fun ShortsReelPlayer(
         } catch (_: Exception) {}
     }
 
+    // Safe exit ensuring TV screen orientation is maintained in landscape and mobile in portrait
+    fun handleClose() {
+        if (isTvDevice) {
+            try {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } catch (_: Exception) {}
+        } else {
+            try {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } catch (_: Exception) {}
+        }
+        onClose()
+    }
+
     // Intercept back button
     BackHandler {
         if (showChooseEpisodeModal) {
@@ -654,7 +696,7 @@ fun ShortsReelPlayer(
         } else if (isLocked) {
             isLocked = false
         } else {
-            onClose()
+            handleClose()
         }
     }
 
@@ -1224,16 +1266,32 @@ fun ShortsReelPlayer(
         } else if (isVskit && activeDub == null) {
             val resolvedStreams = mutableListOf<MovieStream>()
 
-            // 1. First attempt to use directStreams or pre-fetched vskit episodes
-            val vskitMatch = vskitEpisodes.find { it.ep == currentItem.episode }
-            if (vskitMatch != null && vskitMatch.streams.isNotEmpty()) {
-                resolvedStreams.addAll(vskitMatch.streams.filter { it.url.isNotBlank() })
+            // 1. First attempt to use pre-fetched or immediately fetched vskit episodes
+            var vskitMatch = vskitEpisodes.find { it.ep == currentItem.episode }
+            if (vskitMatch == null && vskitEpisodes.isEmpty()) {
+                val eps = withContext(Dispatchers.IO) {
+                    VskitShortsApiClient.fetchShortsEpisodes(targetSubjectId)
+                }
+                if (eps.isNotEmpty()) {
+                    vskitEpisodes = eps
+                    vskitMatch = eps.find { it.ep == currentItem.episode } ?: eps.firstOrNull()
+                }
+            }
+
+            if (vskitMatch != null) {
+                if (vskitMatch.streams.isNotEmpty()) {
+                    resolvedStreams.addAll(vskitMatch.streams.filter { it.url.isNotBlank() })
+                } else if (vskitMatch.videoUrl.isNotBlank()) {
+                    val cleanRes = vskitMatch.resolution.split(",").firstOrNull()?.filter { it.isDigit() }?.ifBlank { "720" } ?: "720"
+                    val fmt = if (vskitMatch.videoUrl.contains(".m3u8")) "HLS" else "MP4"
+                    resolvedStreams.add(MovieStream(id = "vskit_${vskitMatch.ep}", resolution = cleanRes, format = fmt, url = vskitMatch.videoUrl))
+                }
             } else if (currentItem.directStreams.isNotEmpty()) {
                 resolvedStreams.addAll(currentItem.directStreams.filter { it.url.isNotBlank() })
             }
 
-            // 2. Play API with custom headers
-            if (resolvedStreams.isEmpty()) {
+            // 2. Play API with custom headers fallback (if direct VSKit stream wasn't found)
+            if (resolvedStreams.isEmpty() && !targetDetailPath.startsWith("http")) {
                 val vskitPlayResult = MovieBoxApiClient.fetchPlayStreams(
                     context = context,
                     subjectId = targetSubjectId,
@@ -1493,7 +1551,7 @@ fun ShortsReelPlayer(
                             true
                         }
                         KeyEvent.KEYCODE_BACK -> {
-                            onClose()
+                            handleClose()
                             true
                         }
                         else -> false
@@ -1508,7 +1566,7 @@ fun ShortsReelPlayer(
             modifier = Modifier.fillMaxSize(),
             key = { index -> safeList.getOrNull(index)?.id ?: index }
         ) { page ->
-            val shortItem = safeList[page]
+            val shortItem = safeList.getOrNull(page) ?: return@VerticalPager
 
             Box(
                 modifier = Modifier

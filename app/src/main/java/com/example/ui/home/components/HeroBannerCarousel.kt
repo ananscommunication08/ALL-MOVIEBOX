@@ -58,8 +58,8 @@ fun HeroBannerCarousel(
 ) {
     if (banners.isEmpty()) return
 
-    val virtualPageCount = if (banners.size > 1) 1_000_000 else banners.size
-    val initialPage = if (banners.size > 1) 500_000 - (500_000 % banners.size) else 0
+    val virtualPageCount = if (banners.size > 1) banners.size * 200 else banners.size
+    val initialPage = if (banners.size > 1) (banners.size * 100) else 0
 
     val pagerState = rememberPagerState(
         initialPage = initialPage,

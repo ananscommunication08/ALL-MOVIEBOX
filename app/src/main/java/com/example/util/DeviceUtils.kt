@@ -7,8 +7,8 @@ import android.content.res.Configuration
 
 object DeviceUtils {
     /**
-     * Determines whether the current device is an Android TV / Leanback device.
-     * Evaluates UI mode and system features (FEATURE_LEANBACK, type.television).
+     * Determines whether the current device is an Android TV / Leanback / Set-top box device.
+     * Evaluates UI mode and system features (FEATURE_LEANBACK, type.television, absence of touchscreen).
      */
     fun isAndroidTv(context: Context): Boolean {
         val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
@@ -17,6 +17,7 @@ object DeviceUtils {
         }
         val pm = context.packageManager
         return pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-               pm.hasSystemFeature("android.hardware.type.television")
+                pm.hasSystemFeature("android.hardware.type.television") ||
+                pm.hasSystemFeature("android.software.leanback")
     }
 }

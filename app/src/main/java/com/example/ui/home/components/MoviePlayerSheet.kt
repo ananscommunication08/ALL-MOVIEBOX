@@ -274,9 +274,13 @@ fun MoviePlayerSheet(
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
-            // Reset system orientation to default when exiting player
-            val activity = context.findActivity()
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            // Reset system orientation to default when exiting player (Mobile Only)
+            if (!com.example.util.DeviceUtils.isAndroidTv(context)) {
+                try {
+                    val activity = context.findActivity()
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -972,7 +976,7 @@ fun MoviePlayerSheet(
                                             .clickable {
                                                 isHardwareDecoder = !isHardwareDecoder
                                                 gestureHudIcon = Icons.Default.Dvr
-                                                gestureHudText = if (isHardwareDecoder) "Decoder: HW (Hardware)" else "Decoder: SW (Software)"
+                                                 gestureHudText = if (isHardwareDecoder) "Decoder: HW (Hardware)" else "Decoder: SW (Software)"
                                             }
                                     )
 
@@ -1177,13 +1181,16 @@ private fun enterPipMode(context: Context) {
 }
 
 private fun toggleScreenOrientation(context: Context) {
+    if (com.example.util.DeviceUtils.isAndroidTv(context)) return
     val activity = context.findActivity() ?: return
-    val currentOrientation = activity.requestedOrientation
-    activity.requestedOrientation = if (currentOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-    } else {
-        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-    }
+    try {
+        val currentOrientation = activity.requestedOrientation
+        activity.requestedOrientation = if (currentOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    } catch (_: Exception) {}
 }
 
 private fun getFormatFromUrl(url: String): String {

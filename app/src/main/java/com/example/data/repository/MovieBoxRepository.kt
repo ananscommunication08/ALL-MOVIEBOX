@@ -6,8 +6,11 @@ import com.example.data.api.VskitShortsApiClient
 import com.example.data.model.HomeFeedData
 import com.example.data.model.MovieItem
 import com.example.data.model.VskitEpisodeItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 
 class MovieBoxRepository(private val context: Context) {
 
@@ -37,9 +40,9 @@ class MovieBoxRepository(private val context: Context) {
         } catch (_: Exception) {
             // If offline, initialData already emitted
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
-    suspend fun refreshHomeFeed(): HomeFeedData {
+    suspend fun refreshHomeFeed(): HomeFeedData = withContext(Dispatchers.IO) {
         val initialData = MovieBoxApiClient.loadBundledHomeFeed(context)
         val liveData = MovieBoxApiClient.fetchHomeFeed(context)
         if (liveData.sections.isNotEmpty() || liveData.heroBanners.isNotEmpty()) {
@@ -47,12 +50,13 @@ class MovieBoxRepository(private val context: Context) {
             val additionalSections = initialData.sections.filter { initialSec ->
                 initialSec.items.isNotEmpty() && !existingTitles.contains(initialSec.title.trim().lowercase())
             }
-            return liveData.copy(
+            liveData.copy(
                 sections = liveData.sections + additionalSections,
                 heroBanners = if (liveData.heroBanners.isNotEmpty()) liveData.heroBanners else initialData.heroBanners
             )
+        } else {
+            initialData
         }
-        return initialData
     }
 
     /**

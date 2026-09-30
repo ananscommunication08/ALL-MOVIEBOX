@@ -63,8 +63,8 @@ object JioSaavnApiClient {
     )
 
     private val API_CONTEXTS = listOf(
-        "ctx=android&api_version=4",
         "ctx=web6dot0&api_version=4",
+        "ctx=android&api_version=4",
         "ctx=wap6dot0&api_version=4"
     )
 
@@ -78,7 +78,7 @@ object JioSaavnApiClient {
     private var cachedHomeData: SaavnHomeData? = null
 
     private const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -181,10 +181,8 @@ object JioSaavnApiClient {
     fun getHighQualityImage(url: String?): String {
         if (url.isNullOrBlank()) return ""
         return url
-            .replace("50x50.jpg", "500x500.jpg")
-            .replace("150x150.jpg", "500x500.jpg")
-            .replace("50x50.png", "500x500.png")
-            .replace("150x150.png", "500x500.png")
+            .replace("150x150", "500x500")
+            .replace("50x50", "500x500")
             .replace("http://", "https://")
     }
 
@@ -213,6 +211,7 @@ object JioSaavnApiClient {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json, text/plain, */*")
             .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+            .header("Cookie", "L=hindi%2Cenglish; gdpr_acceptance=true; DL=english")
             .build()
     }
 
@@ -224,7 +223,9 @@ object JioSaavnApiClient {
             val base = getActiveBaseUrl()
             val ctx = getActiveContext()
             val sep = if (callQuery.contains("?")) "&" else "?"
-            val fullUrl = if (callQuery.startsWith("http")) callQuery else "$base$sep$callQuery&$ctx&_format=json&_marker=0"
+            val ctxParam = if (callQuery.contains("ctx=")) "" else "&$ctx"
+            val formatParam = if (callQuery.contains("_format=")) "" else "&_format=json&_marker=0"
+            val fullUrl = if (callQuery.startsWith("http")) callQuery else "$base$sep$callQuery$ctxParam$formatParam"
 
             try {
                 val response = httpClient.newCall(buildRequest(fullUrl)).execute()
@@ -362,17 +363,32 @@ object JioSaavnApiClient {
      * Parse MediaItem from JioSaavn JSON object (Mixed content: Song, Album, Playlist, Artist)
      */
      fun parseMediaItem(obj: JSONObject): MediaItem {
-         val rawType = obj.optString("type", "song").lowercase()
+         val rawType = obj.optString("type", "").lowercase().trim()
+         val moreInfo = obj.optJSONObject("more_info")
+         val moreType = moreInfo?.optString("type", "")?.lowercase()?.trim() ?: ""
+         val subType = obj.optString("subtype", "").lowercase().trim()
+
+         val encryptedMediaUrl = moreInfo?.optString("encrypted_media_url")
+             ?: obj.optString("encrypted_media_url", "")
+         val hasEncryptedMedia = encryptedMediaUrl.isNotBlank()
+
+         // Accurate item type detection:
+         // 1. If encrypted_media_url is present, or type is "song"/"track", it is definitely a single song/music track!
+         // 2. If type is "album", it is an Album!
+         // 3. If type is "playlist"/"chart"/"channel", it is a Playlist!
+         // 4. If type is "artist", it is an Artist!
          val type = when {
-             rawType == "album" -> MediaType.ALBUM
-             rawType == "playlist" -> MediaType.PLAYLIST
-             rawType == "artist" -> MediaType.ARTIST
+             hasEncryptedMedia || rawType == "song" || rawType == "track" || moreType == "song" || moreType == "track" || subType == "song" -> MediaType.SONG
+             rawType == "album" || moreType == "album" || subType == "album" -> MediaType.ALBUM
+             rawType == "playlist" || moreType == "playlist" || subType == "playlist" ||
+                 rawType == "chart" || rawType == "channel" || rawType == "radio" -> MediaType.PLAYLIST
+             rawType == "artist" || moreType == "artist" -> MediaType.ARTIST
+             moreInfo?.has("song_count") == true -> MediaType.ALBUM
              else -> MediaType.SONG
          }
 
-         val id = obj.optString("id").ifBlank { obj.optString("perma_url") }
+         val id = obj.optString("id", obj.optString("listid", obj.optString("songid", obj.optString("albumid", "")))).ifBlank { obj.optString("perma_url") }
          val title = cleanText(obj.optString("title").ifBlank { obj.optString("name") })
-         val moreInfo = obj.optJSONObject("more_info")
 
          val subtitle = cleanText(
              obj.optString("subtitle").ifBlank {
@@ -394,18 +410,17 @@ object JioSaavnApiClient {
          if (image.isBlank() && moreInfo != null) {
              image = moreInfo.optString("image")
          }
+         val hdImage = getHighQualityImage(image)
 
          val language = cleanText(obj.optString("language", "hindi"))
          val followerCount = (moreInfo?.optString("follower_count") ?: "0").toLongOrNull() ?: 0L
          val songCount = (moreInfo?.optString("song_count") ?: "0").toIntOrNull() ?: 0
-         val encryptedMediaUrl = moreInfo?.optString("encrypted_media_url")
-             ?: obj.optString("encrypted_media_url", "")
 
          return MediaItem(
              id = id,
              title = title,
              subtitle = subtitle,
-             imageUrl = image,
+             imageUrl = hdImage,
              type = type,
              language = language,
              followerCount = followerCount,
@@ -415,117 +430,184 @@ object JioSaavnApiClient {
      }
 
     /**
+     * Helper to format artist follower counts like 38245100 -> "38.2M Fans"
+     */
+    fun formatFollowers(countStr: String?): String {
+        if (countStr.isNullOrBlank()) return "Artist"
+        val clean = countStr.replace(",", "").trim()
+        val count = clean.toLongOrNull() ?: return if (clean.contains("Fans", ignoreCase = true)) clean else "$clean Fans"
+        return when {
+            count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM Fans", count / 1_000_000.0)
+            count >= 1_000 -> String.format(java.util.Locale.US, "%.1fK Fans", count / 1_000.0)
+            else -> "$count Fans"
+        }
+    }
+
+    /**
      * Fetch JioSaavn Home / Editorial Feed with automatic mirror rotation and fallback caching.
      */
     suspend fun fetchHomeFeed(): SaavnHomeData = withContext(Dispatchers.IO) {
         try {
-            val editorialDeferred = async {
-                fetchJsonObject("__call=webapi.get&type=editorial&p=1&n=30")
+            // Master Launch Data API - official JioSaavn single master endpoint
+            val launchDataDeferred = async {
+                fetchJsonObject("__call=webapi.getLaunchData&api_version=4&_format=json&_marker=0&ctx=web6dot0")
             }
-            val trendingDeferred = async {
-                fetchJsonArray("__call=content.getTrending")
+            // API 2: Pop Hits Curated Playlist & Pop Hindi Albums (Dedicated Clean Data)
+            val popHitsPlaylistDeferred = async {
+                fetchJsonObject("__call=playlist.getDetails&_format=json&cc=in&_marker=0&listid=1302009985")
             }
+            val popHindiAlbumsDeferred = async {
+                searchAlbums("Pop Hindi", page = 1, limit = 15)
+            }
+            // PART 3: Top Artists Carousel API
+            val topArtistsDeferred = async {
+                getTopArtists(page = 1, limit = 50)
+            }
+            // Additional fallback endpoints
             val chartsDeferred = async {
-                fetchJsonArray("__call=content.getCharts")
-            }
-            val chartsObjDeferred = async {
-                fetchJsonObject("__call=content.getCharts")
-            }
-            val extraTopChartsDeferred = async {
-                searchPlaylists("Top 50", page = 1, limit = 25)
-            }
-            val extraTrendingChartsDeferred = async {
-                searchPlaylists("Trending", page = 1, limit = 20)
-            }
-            val extraChartsDeferred = async {
-                searchPlaylists("Charts", page = 1, limit = 20)
-            }
-            val playlistsDeferred = async {
-                fetchJsonArray("__call=content.getFeaturedPlaylists&p=1&n=30")
-            }
-            val albumsDeferred = async {
-                fetchJsonArray("__call=content.getAlbums&p=1&n=30")
+                fetchJsonArray("__call=content.getCharts&_format=json&_marker=0&ctx=web6dot0&api_version=4")
             }
 
-            val editorialObj = editorialDeferred.await()
-            val trendingArray = trendingDeferred.await()
+            val launchDataObj = launchDataDeferred.await()
+            val popHitsPlaylist = popHitsPlaylistDeferred.await()
+            val popHindiAlbums = popHindiAlbumsDeferred.await()
+            val topArtists = topArtistsDeferred.await()
             val chartsArray = chartsDeferred.await()
-            val chartsObj = chartsObjDeferred.await()
-            val extraTopCharts = extraTopChartsDeferred.await()
-            val extraTrendingCharts = extraTrendingChartsDeferred.await()
-            val extraCharts = extraChartsDeferred.await()
-            val playlistsArray = playlistsDeferred.await()
-            val albumsArray = albumsDeferred.await()
 
-            val trendingItems = mutableListOf<MediaItem>()
-            val chartToppers = mutableListOf<SaavnSongItem>()
+            val trendingNow = mutableListOf<MediaItem>()
+            val editorialPicks = mutableListOf<MediaItem>()
+            val newTrendingAlbums = mutableListOf<MediaItem>()
             val topCharts = mutableListOf<MediaItem>()
-            val featuredPlaylists = mutableListOf<MediaItem>()
-            val newReleases = mutableListOf<MediaItem>()
+            val genresAndMoods = mutableListOf<MediaItem>()
+            val freeHits = mutableListOf<MediaItem>()
+            val devotional = mutableListOf<MediaItem>()
+            val bestOf90s = mutableListOf<MediaItem>()
+            val popHindiItems = mutableListOf<MediaItem>()
 
-            fun addMediaItems(arr: JSONArray?, targetList: MutableList<MediaItem>, defaultType: MediaType? = null) {
+            fun addMediaItems(
+                arr: JSONArray?,
+                targetList: MutableList<MediaItem>,
+                defaultType: MediaType? = null,
+                badge: String = ""
+            ) {
                 if (arr == null) return
                 for (i in 0 until arr.length()) {
                     val obj = arr.optJSONObject(i) ?: continue
                     val rawItem = parseMediaItem(obj)
-                    val item = if (defaultType != null && rawItem.type == MediaType.SONG) rawItem.copy(type = defaultType) else rawItem
-                    if (item.title.isNotBlank() && targetList.none { it.id == item.id }) {
-                        targetList.add(item)
+                    val hasExplicitTypeOrMedia = obj.has("type") ||
+                        obj.optJSONObject("more_info")?.has("type") == true ||
+                        !rawItem.encryptedMediaUrl.isNullOrBlank()
+
+                    var item = if (!hasExplicitTypeOrMedia && defaultType != null) {
+                        rawItem.copy(type = defaultType)
+                    } else {
+                        rawItem
                     }
-                    if (chartToppers.size < 25 && (item.type == MediaType.SONG || obj.has("more_info"))) {
-                        val songItem = parseSongObject(obj)
-                        if (songItem.title.isNotBlank() && chartToppers.none { it.id == songItem.id }) {
-                            chartToppers.add(songItem)
-                        }
+                    if (badge.isNotBlank()) {
+                        item = item.copy(badge = badge)
+                    }
+                    if (item.title.isNotBlank() && targetList.none { it.id == item.id || it.title.equals(item.title, ignoreCase = true) }) {
+                        targetList.add(item)
                     }
                 }
             }
 
-            // 1. Process Editorial Feed first (Guaranteed comprehensive and rich starting cards)
-            if (editorialObj != null) {
-                addMediaItems(extractArrayFromField(editorialObj, "new_trending"), trendingItems)
-                addMediaItems(extractArrayFromField(editorialObj, "new_albums"), newReleases, defaultType = MediaType.ALBUM)
-                addMediaItems(extractArrayFromField(editorialObj, "top_playlists"), featuredPlaylists, defaultType = MediaType.PLAYLIST)
-                addMediaItems(extractArrayFromField(editorialObj, "charts"), topCharts, defaultType = MediaType.PLAYLIST)
-                addMediaItems(extractArrayFromField(editorialObj, "top_charts"), topCharts, defaultType = MediaType.PLAYLIST)
+            // 1. Process Master Launch Data (Section mapping per guide)
+            if (launchDataObj != null) {
+                // Section 1: Trending Now - json["new_trending"]
+                addMediaItems(extractArrayFromField(launchDataObj, "new_trending"), trendingNow)
+                // Section 2: Editorial Picks - json["top_playlists"]
+                addMediaItems(extractArrayFromField(launchDataObj, "top_playlists"), editorialPicks, defaultType = MediaType.PLAYLIST)
+                // Section 3: New Trending Albums - json["new_albums"]
+                addMediaItems(extractArrayFromField(launchDataObj, "new_albums"), newTrendingAlbums, defaultType = MediaType.ALBUM, badge = "ALBUM")
+                // Section 4: Top Charts - json["charts"]
+                addMediaItems(extractArrayFromField(launchDataObj, "charts"), topCharts, defaultType = MediaType.PLAYLIST)
+                // Section 5: Top Genres & Moods - json["browse_discover"]
+                addMediaItems(extractArrayFromField(launchDataObj, "browse_discover"), genresAndMoods, defaultType = MediaType.PLAYLIST, badge = "GENRE")
+                // Section 6: Free Hits - json["promo:vx:data:68"]
+                addMediaItems(extractArrayFromField(launchDataObj, "promo:vx:data:68"), freeHits, defaultType = MediaType.PLAYLIST, badge = "FREE HITS")
+                // Section 7: Jai Ganesh & Devotional - json["promo:vx:data:112"] or 107
+                addMediaItems(extractArrayFromField(launchDataObj, "promo:vx:data:112") ?: extractArrayFromField(launchDataObj, "promo:vx:data:107"), devotional, defaultType = MediaType.PLAYLIST, badge = "BHAKTI")
+                // Section 8: Best of 90s - json["promo:vx:data:185"] or 211
+                addMediaItems(extractArrayFromField(launchDataObj, "promo:vx:data:185") ?: extractArrayFromField(launchDataObj, "promo:vx:data:211"), bestOf90s, defaultType = MediaType.PLAYLIST, badge = "90s RETRO")
             }
 
-            // 2. Supplement with specific content endpoints without duplicates
-            addMediaItems(trendingArray, trendingItems)
-            addMediaItems(albumsArray, newReleases, defaultType = MediaType.ALBUM)
-            addMediaItems(playlistsArray, featuredPlaylists, defaultType = MediaType.PLAYLIST)
+            // Fallback for promotional sections if promo keys rotated
+            if (freeHits.isEmpty()) {
+                val searchRes = searchPlaylists("Free Hits", limit = 10)
+                for (p in searchRes) {
+                    freeHits.add(MediaItem(id = p.id, title = p.title, subtitle = p.subtitle.ifBlank { "Free Hits" }, imageUrl = p.image, type = MediaType.PLAYLIST, badge = "FREE HITS"))
+                }
+            }
+            if (devotional.isEmpty()) {
+                val searchRes = searchPlaylists("Bhakti", limit = 10)
+                for (p in searchRes) {
+                    devotional.add(MediaItem(id = p.id, title = p.title, subtitle = p.subtitle.ifBlank { "Devotional" }, imageUrl = p.image, type = MediaType.PLAYLIST, badge = "BHAKTI"))
+                }
+            }
+            if (bestOf90s.isEmpty()) {
+                val searchRes = searchPlaylists("90s Bollywood", limit = 10)
+                for (p in searchRes) {
+                    bestOf90s.add(MediaItem(id = p.id, title = p.title, subtitle = p.subtitle.ifBlank { "90s Retro" }, imageUrl = p.image, type = MediaType.PLAYLIST, badge = "90s RETRO"))
+                }
+            }
+
+            // Ensure Top Charts has rich list
             addMediaItems(chartsArray, topCharts, defaultType = MediaType.PLAYLIST)
-            if (chartsObj != null) {
-                addMediaItems(extractArrayFromField(chartsObj, "charts"), topCharts, defaultType = MediaType.PLAYLIST)
-                addMediaItems(extractArrayFromField(chartsObj, "data"), topCharts, defaultType = MediaType.PLAYLIST)
-            }
 
-            // 3. Ensure Top Charts row has ALL cards by merging top chart playlists
-            for (p in extraTopCharts + extraTrendingCharts + extraCharts) {
-                if (topCharts.none { it.id == p.id || it.title.equals(p.title, ignoreCase = true) }) {
-                    topCharts.add(
+            // API 2: Pop Hindi Curated Playlist + Albums
+            if (popHitsPlaylist != null) {
+                val pItem = parseMediaItem(popHitsPlaylist).copy(type = MediaType.PLAYLIST, badge = "POP HIT")
+                if (pItem.title.isNotBlank()) {
+                    popHindiItems.add(pItem)
+                }
+                val playlistSongs = popHitsPlaylist.optJSONArray("songs") ?: popHitsPlaylist.optJSONArray("list")
+                if (playlistSongs != null) {
+                    for (i in 0 until playlistSongs.length()) {
+                        val sObj = playlistSongs.optJSONObject(i) ?: continue
+                        val sItem = parseMediaItem(sObj).copy(type = MediaType.SONG, badge = "POP HIT")
+                        if (sItem.title.isNotBlank() && popHindiItems.none { it.id == sItem.id }) {
+                            popHindiItems.add(sItem)
+                        }
+                    }
+                }
+            }
+            for (popAlbum in popHindiAlbums) {
+                if (popHindiItems.none { it.id == popAlbum.id || it.title.equals(popAlbum.title, ignoreCase = true) }) {
+                    popHindiItems.add(
                         MediaItem(
-                            id = p.id,
-                            title = p.title,
-                            subtitle = p.subtitle.ifBlank { "Top Chart" },
-                            imageUrl = p.image,
-                            type = MediaType.PLAYLIST,
-                            songCount = p.songCount,
-                            followerCount = p.followerCount
+                            id = popAlbum.id,
+                            title = popAlbum.title,
+                            subtitle = popAlbum.artist.ifBlank { "Pop Hindi" },
+                            imageUrl = popAlbum.image,
+                            type = MediaType.ALBUM,
+                            songCount = popAlbum.songCount,
+                            badge = "POP ALBUM"
                         )
                     )
                 }
             }
 
             val result = SaavnHomeData(
-                trendingItems = trendingItems,
+                trendingNow = trendingNow,
+                editorialPicks = editorialPicks,
+                popHindiItems = popHindiItems,
+                topArtists = topArtists,
+                newTrendingAlbums = newTrendingAlbums,
+                freeHits = freeHits,
                 topCharts = topCharts,
-                featuredPlaylists = featuredPlaylists,
-                newReleases = newReleases,
-                chartToppers = chartToppers
+                devotional = devotional,
+                bestOf90s = bestOf90s,
+                genresAndMoods = genresAndMoods,
+
+                // Backward compatibility
+                trendingItems = trendingNow,
+                topPlaylists = emptyList(),
+                featuredPlaylists = editorialPicks,
+                newReleases = newTrendingAlbums
             )
 
-            if (trendingItems.isNotEmpty() || newReleases.isNotEmpty() || featuredPlaylists.isNotEmpty()) {
+            if (trendingNow.isNotEmpty() || topCharts.isNotEmpty() || newTrendingAlbums.isNotEmpty()) {
                 cachedHomeData = result
             }
 
@@ -537,7 +619,7 @@ object JioSaavnApiClient {
     }
 
     private fun SaavnHomeData.ifEmptyFallback(fallback: SaavnHomeData?): SaavnHomeData {
-        if (trendingItems.isEmpty() && newReleases.isEmpty() && featuredPlaylists.isEmpty() && fallback != null) {
+        if (trendingNow.isEmpty() && trendingItems.isEmpty() && newTrendingAlbums.isEmpty() && fallback != null) {
             return fallback
         }
         return this
@@ -609,15 +691,16 @@ object JioSaavnApiClient {
     }
 
     /**
-     * Search songs with query using failover mirrors
+     * Search songs with query using failover mirrors (returns songs and total available count)
      */
-    suspend fun searchSongs(query: String, page: Int = 1, limit: Int = 30): List<SaavnSongItem> = withContext(Dispatchers.IO) {
+    suspend fun searchSongsWithTotal(query: String, page: Int = 1, limit: Int = 50): Pair<List<SaavnSongItem>, Int> = withContext(Dispatchers.IO) {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val callQuery = "__call=search.getResults&q=$encodedQuery&p=$page&n=$limit"
         try {
-            val body = executeWithFailover(callQuery) ?: return@withContext emptyList()
+            val body = executeWithFailover(callQuery) ?: return@withContext Pair(emptyList(), 0)
             val root = JSONObject(body)
-            val results = root.optJSONArray("results") ?: return@withContext emptyList()
+            val total = root.optInt("total", 0)
+            val results = root.optJSONArray("results") ?: return@withContext Pair(emptyList(), total)
             val songs = mutableListOf<SaavnSongItem>()
             for (i in 0 until results.length()) {
                 val obj = results.optJSONObject(i) ?: continue
@@ -626,17 +709,24 @@ object JioSaavnApiClient {
                     songs.add(song)
                 }
             }
-            songs
+            Pair(songs, total)
         } catch (e: Exception) {
             Log.e(TAG, "Error searching songs for query $query", e)
-            emptyList()
+            Pair(emptyList(), 0)
         }
+    }
+
+    /**
+     * Search songs with query using failover mirrors
+     */
+    suspend fun searchSongs(query: String, page: Int = 1, limit: Int = 50): List<SaavnSongItem> {
+        return searchSongsWithTotal(query, page, limit).first
     }
 
     /**
      * Search albums with query using failover mirrors
      */
-    suspend fun searchAlbums(query: String, page: Int = 1, limit: Int = 20): List<SaavnAlbumItem> = withContext(Dispatchers.IO) {
+    suspend fun searchAlbums(query: String, page: Int = 1, limit: Int = 40): List<SaavnAlbumItem> = withContext(Dispatchers.IO) {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val callQuery = "__call=search.getAlbumResults&q=$encodedQuery&p=$page&n=$limit"
         try {
@@ -661,7 +751,7 @@ object JioSaavnApiClient {
     /**
      * Search playlists with query using failover mirrors
      */
-    suspend fun searchPlaylists(query: String, page: Int = 1, limit: Int = 20): List<SaavnPlaylistItem> = withContext(Dispatchers.IO) {
+    suspend fun searchPlaylists(query: String, page: Int = 1, limit: Int = 40): List<SaavnPlaylistItem> = withContext(Dispatchers.IO) {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val callQuery = "__call=search.getPlaylistResults&q=$encodedQuery&p=$page&n=$limit"
         try {
@@ -964,7 +1054,7 @@ object JioSaavnApiClient {
     /**
      * Search artists with query
      */
-    suspend fun searchArtists(query: String, page: Int = 1, limit: Int = 20): List<com.example.data.model.SaavnArtistItem> = withContext(Dispatchers.IO) {
+    suspend fun searchArtists(query: String, page: Int = 1, limit: Int = 40): List<com.example.data.model.SaavnArtistItem> = withContext(Dispatchers.IO) {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val callQuery = "__call=search.getArtistResults&q=$encodedQuery&p=$page&n=$limit"
         try {
@@ -987,6 +1077,163 @@ object JioSaavnApiClient {
         } catch (e: Exception) {
             Log.e(TAG, "Error searching artists for query $query", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Get Top Artists list for Home Screen Carousel
+     */
+    suspend fun getTopArtists(page: Int = 1, limit: Int = 50): List<com.example.data.model.SaavnArtistItem> = withContext(Dispatchers.IO) {
+        val callQuery = "__call=social.getTopArtists&_format=json&_marker=0&api_version=4&ctx=web6dot0&p=$page&n=$limit"
+        try {
+            val body = executeWithFailover(callQuery) ?: return@withContext emptyList()
+            val root = JSONObject(body)
+            val topArtistsArray = root.optJSONArray("top_artists") ?: root.optJSONArray("artists") ?: return@withContext emptyList()
+            val artists = mutableListOf<com.example.data.model.SaavnArtistItem>()
+            for (i in 0 until topArtistsArray.length()) {
+                val obj = topArtistsArray.optJSONObject(i) ?: continue
+                val id = obj.optString("artistid", obj.optString("id", ""))
+                val name = cleanText(obj.optString("name", obj.optString("title", "")))
+                val rawImage = obj.optString("image", "")
+                val image = rawImage
+                    .replace("150x150", "500x500")
+                    .replace("50x50", "500x500")
+                    .replace("http://", "https://")
+                val rawFollowers = obj.optString("follower_count", obj.optString("fan_count", ""))
+                val followerCountFormatted = formatFollowers(rawFollowers)
+                val role = cleanText(obj.optString("role", "Artist"))
+                if (id.isNotBlank() && name.isNotBlank()) {
+                    artists.add(
+                        com.example.data.model.SaavnArtistItem(
+                            id = id,
+                            name = name,
+                            image = image,
+                            role = role,
+                            followerCount = followerCountFormatted,
+                            isVerified = true
+                        )
+                    )
+                }
+            }
+            artists
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching top artists", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Get Complete Artist Page Details: Discography, Top Albums, Top Songs (PART 4 Critical Rules)
+     */
+    suspend fun getArtistPageDetails(artistId: String): com.example.data.model.ArtistDiscography? = withContext(Dispatchers.IO) {
+        val callQuery = "__call=artist.getArtistPageDetails&_format=json&_marker=0&artistId=$artistId&n_song=50&n_album=50"
+        try {
+            val body = executeWithFailover(callQuery) ?: return@withContext null
+            val root = JSONObject(body)
+            val name = cleanText(root.optString("name", root.optString("artistName", "")))
+            val rawImage = root.optString("image", "")
+            val image = rawImage
+                .replace("150x150", "500x500")
+                .replace("50x50", "500x500")
+                .replace("http://", "https://")
+            val subtitle = cleanText(root.optString("subtitle", root.optString("role", "Playback Singer, Music Director")))
+            val rawFollowers = root.optString("follower_count", root.optString("fan_count", ""))
+            val followerCountFormatted = formatFollowers(rawFollowers)
+            val isVerified = root.optBoolean("isVerified", true)
+
+            // Top Songs
+            val songs = mutableListOf<SaavnSongItem>()
+            val topSongsObj = root.optJSONObject("topSongs")
+            val songsArray = topSongsObj?.optJSONArray("songs") ?: root.optJSONArray("topSongs") ?: root.optJSONArray("songs")
+            if (songsArray != null) {
+                for (i in 0 until songsArray.length()) {
+                    val sObj = songsArray.optJSONObject(i) ?: continue
+                    val song = parseSongObject(sObj)
+                    if (song.title.isNotBlank()) songs.add(song)
+                }
+            }
+
+            // Top Albums (Discography) with 4 Critical Parsing Rules
+            val albums = mutableListOf<SaavnAlbumItem>()
+            val topAlbumsObj = root.optJSONObject("topAlbums")
+            val albumsArray = topAlbumsObj?.optJSONArray("albums") ?: root.optJSONArray("topAlbums") ?: root.optJSONArray("albums")
+            if (albumsArray != null) {
+                for (i in 0 until albumsArray.length()) {
+                    val aObj = albumsArray.optJSONObject(i) ?: continue
+                    val moreInfo = aObj.optJSONObject("more_info")
+
+                    // 1. Album Title Parsing
+                    val rawTitle = aObj.optString("album").ifEmpty {
+                        aObj.optString("title").ifEmpty {
+                            aObj.optString("name").ifEmpty {
+                                moreInfo?.optString("album") ?: "Unknown Album"
+                            }
+                        }
+                    }
+                    val albumTitle = cleanText(rawTitle)
+
+                    // 2. Album Image URL Parsing (500x500 HD)
+                    val rawImg = aObj.optString("imageUrl").ifEmpty {
+                        aObj.optString("image").ifEmpty {
+                            moreInfo?.optString("image") ?: ""
+                        }
+                    }
+                    val hdImageUrl = rawImg
+                        .replace("150x150", "500x500")
+                        .replace("50x50", "500x500")
+                        .replace("http://", "https://")
+
+                    // 3. Album Subtitle & Artists
+                    val rawSubtitle = aObj.optString("primaryArtists").ifEmpty {
+                        aObj.optString("singers").ifEmpty {
+                            aObj.optString("subtitle").ifEmpty {
+                                moreInfo?.optString("singers") ?: "Album"
+                            }
+                        }
+                    }
+                    val albumSubtitle = cleanText(rawSubtitle)
+
+                    // 4. Album ID & Song Count
+                    val albumId = aObj.optString("albumid").ifEmpty {
+                        aObj.optString("id").ifEmpty {
+                            aObj.optString("album_id") ?: ""
+                        }
+                    }
+                    val songCount = aObj.optInt("numSongs", 0).takeIf { it > 0 }
+                        ?: aObj.optInt("song_pids", 0)
+                    val year = aObj.optString("year", "")
+                    val language = cleanText(aObj.optString("language", ""))
+
+                    if (albumId.isNotBlank() && albumTitle.isNotBlank()) {
+                        albums.add(
+                            SaavnAlbumItem(
+                                id = albumId,
+                                title = albumTitle,
+                                subtitle = albumSubtitle,
+                                image = hdImageUrl,
+                                artist = albumSubtitle,
+                                year = year,
+                                language = language,
+                                songCount = songCount
+                            )
+                        )
+                    }
+                }
+            }
+
+            com.example.data.model.ArtistDiscography(
+                artistId = artistId,
+                artistName = name,
+                subtitle = subtitle,
+                artistImage = image,
+                followerCount = followerCountFormatted,
+                isVerified = isVerified,
+                topSongs = songs,
+                topAlbums = albums
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching artist page details for $artistId", e)
+            null
         }
     }
 }

@@ -73,6 +73,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.widthIn
+import coil.decode.SvgDecoder
+import com.example.R
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -103,6 +107,7 @@ import kotlinx.coroutines.launch
 fun TvHomeMainFeedView(
     uiState: HomeUiState,
     onOpenSearch: () -> Unit,
+    onOpenSearchWithQuery: (String) -> Unit = {},
     onOpenDownloads: () -> Unit,
     onBannerClick: (HeroBanner) -> Unit,
     onPlayBanner: (HeroBanner) -> Unit,
@@ -146,6 +151,32 @@ fun TvHomeMainFeedView(
         )
     }
 
+    if (uiState.activeServer == AppServer.SERVER_6) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(DarkBackground)
+        ) {
+            TvTopNavBar(
+                activeServer = uiState.activeServer,
+                onOpenSearch = onOpenSearch,
+                onOpenDownloads = onOpenDownloads,
+                onOpenSettings = { showServerChooseDialog = true },
+                firstFocusRequester = firstFocusRequester
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                com.example.ui.music.JioSaavnServerView(
+                    onOpenSearchWithQuery = onOpenSearchWithQuery
+                )
+            }
+        }
+        return
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -158,7 +189,8 @@ fun TvHomeMainFeedView(
                 activeServer = uiState.activeServer,
                 onOpenSearch = onOpenSearch,
                 onOpenDownloads = onOpenDownloads,
-                onOpenSettings = { showServerChooseDialog = true }
+                onOpenSettings = { showServerChooseDialog = true },
+                firstFocusRequester = firstFocusRequester
             )
         }
 
@@ -171,8 +203,7 @@ fun TvHomeMainFeedView(
                     banners = banners,
                     onBannerFocused = { activeHeroBanner = it },
                     onPlayBanner = onPlayBanner,
-                    onDetailsClick = onBannerClick,
-                    firstFocusRequester = firstFocusRequester
+                    onDetailsClick = onBannerClick
                 )
             }
         }
@@ -195,11 +226,24 @@ fun TvHomeMainFeedView(
                 }
             }
             AppServer.SERVER_2 -> {
-                // Server 2: Vskit Shorts
+                // Server 2: Vskit Shorts curated sections from operating API + All Quick Shorts
+                itemsIndexed(
+                    items = uiState.shortsTvFeedData.sections,
+                    key = { index, sec -> "tv_vskit_sec_${sec.id}_$index" }
+                ) { _, section ->
+                    TvCategoryRow(
+                        section = section,
+                        movies = section.items,
+                        onMovieClick = { movie -> onMovieClick(movie, section.items, true) },
+                        onViewMoreClick = {
+                            onViewMoreClick(section, true, false)
+                        }
+                    )
+                }
                 item(key = "tv_vskit_shorts") {
                     val sec = CategorySection(
                         id = "vskit_popular",
-                        title = "🔥 Popular Reels & Shorts",
+                        title = "🎬 All Quick Shorts",
                         type = "shorts",
                         items = uiState.vskitFilterShortsList,
                         isVskitSection = true
@@ -213,13 +257,55 @@ fun TvHomeMainFeedView(
                         }
                     )
                 }
+                if (uiState.vskitFilterHasMore && !uiState.isVskitFilterLoadingMore) {
+                    item(key = "tv_vskit_load_more") {
+                        LaunchedEffect(Unit) {
+                            onLoadMoreRecommend()
+                        }
+                    }
+                }
             }
             AppServer.SERVER_3 -> {
                 // Server 3: Lookr
+                if (uiState.lookrCategories.isNotEmpty()) {
+                    item(key = "tv_lookr_categories") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            itemsIndexed(uiState.lookrCategories) { _, cat ->
+                                TvCategoryPill(
+                                    label = cat.tagDisplayName,
+                                    isSelected = cat.tagName == uiState.selectedLookrCategory.tagName,
+                                    onClick = { onSelectLookrCategory(cat) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val currentSubTags = uiState.selectedLookrCategory.subTags
+                if (currentSubTags.isNotEmpty()) {
+                    item(key = "tv_lookr_subtags") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 32.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(currentSubTags) { _, tag ->
+                                TvCategoryPill(
+                                    label = tag.tagDisplayName,
+                                    isSelected = tag.tagName == uiState.selectedLookrSubTag.tagName,
+                                    onClick = { onSelectLookrSubTag(tag) }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item(key = "tv_lookr_items") {
                     val sec = CategorySection(
                         id = "lookr_trending",
-                        title = "🎬 Lookr Trending Dramas",
+                        title = "🎬 ${uiState.selectedLookrCategory.tagDisplayName} Dramas",
                         type = "shorts",
                         items = uiState.lookrItems,
                         isVskitSection = true
@@ -233,13 +319,38 @@ fun TvHomeMainFeedView(
                         }
                     )
                 }
+
+                if (uiState.lookrHasMore && !uiState.isLookrLoadingMore) {
+                    item(key = "tv_lookr_load_more") {
+                        LaunchedEffect(Unit) {
+                            onLoadMoreLookr()
+                        }
+                    }
+                }
             }
             AppServer.SERVER_4 -> {
                 // Server 4: Story TV
+                if (uiState.storyTvLanguages.isNotEmpty()) {
+                    item(key = "tv_storytv_languages") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            itemsIndexed(uiState.storyTvLanguages) { _, lang ->
+                                TvCategoryPill(
+                                    label = lang.title,
+                                    isSelected = lang.langId == uiState.selectedStoryTvLanguage?.langId,
+                                    onClick = { onSelectStoryTvLanguage(lang) }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item(key = "tv_storytv_items") {
                     val sec = CategorySection(
                         id = "storytv_all",
-                        title = "🔥 Story TV All Shows",
+                        title = "🔥 ${uiState.selectedStoryTvLanguage?.title ?: "Story TV"} Shows",
                         type = "shorts",
                         items = uiState.storyTvItems,
                         isVskitSection = true
@@ -252,6 +363,14 @@ fun TvHomeMainFeedView(
                             onViewMoreClick(sec, true, false)
                         }
                     )
+                }
+
+                if (uiState.storyTvHasMore && !uiState.isStoryTvLoadingMore) {
+                    item(key = "tv_storytv_load_more") {
+                        LaunchedEffect(Unit) {
+                            onLoadMoreStoryTv()
+                        }
+                    }
                 }
             }
             AppServer.SERVER_5 -> {
@@ -273,28 +392,66 @@ fun TvHomeMainFeedView(
                         }
                     )
                 }
-            }
-            AppServer.SERVER_6 -> {
-                // Server 6: JioSaavn Music
-                item(key = "tv_saavn_music") {
-                    Box(modifier = Modifier.fillMaxWidth().height(600.dp)) {
-                        com.example.ui.music.JioSaavnServerView()
+
+                if (uiState.freeReelsHasMore && !uiState.isFreeReelsLoadingMore) {
+                    item(key = "tv_freereels_load_more") {
+                        LaunchedEffect(Unit) {
+                            onLoadMoreFreeReels()
+                        }
                     }
                 }
+            }
+            AppServer.SERVER_6 -> {
+                // Handled above
             }
         }
     }
 }
 
 /**
- * Top TV navigation bar with D-Pad focus indicators
+ * TV Category & Filter Pill for D-pad navigation
+ */
+@Composable
+private fun TvCategoryPill(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .border(
+                width = if (isFocused) 2.5.dp else if (isSelected) 1.5.dp else 0.dp,
+                color = if (isFocused) Color.White else if (isSelected) MovieBoxRed else Color.Transparent,
+                shape = RoundedCornerShape(16.dp)
+            )
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = if (isFocused) Color.White.copy(alpha = 0.28f) else if (isSelected) MovieBoxRed else Color.White.copy(alpha = 0.08f)
+    ) {
+        Text(
+            text = label,
+            color = if (isFocused || isSelected) Color.White else Color.LightGray,
+            fontSize = 13.sp,
+            fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+        )
+    }
+}
+
+/**
+ * Top TV navigation bar with D-Pad focus indicators and dynamic active server logo & title
  */
 @Composable
 private fun TvTopNavBar(
     activeServer: AppServer,
     onOpenSearch: () -> Unit,
     onOpenDownloads: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    firstFocusRequester: FocusRequester? = null
 ) {
     Row(
         modifier = Modifier
@@ -303,16 +460,126 @@ private fun TvTopNavBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // App Title & TV Badge & Active Server Badge
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "STREAM BOX",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.width(8.dp))
+        // App Title & TV Badge & Active Server Logo
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { onOpenSettings() }
+        ) {
+            when (activeServer) {
+                AppServer.SERVER_1 -> {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_moviebox_logo),
+                        contentDescription = "MovieBox Logo",
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                }
+                AppServer.SERVER_2 -> {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data("https://vskit.online/logo.svg")
+                                .decoderFactory(SvgDecoder.Factory())
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "VSKit Logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                }
+                AppServer.SERVER_3 -> {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(AppServer.SERVER_3.logoUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Lookr Logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                }
+                AppServer.SERVER_4 -> {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(AppServer.SERVER_4.logoUrl)
+                            .decoderFactory(SvgDecoder.Factory())
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Story TV Logo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .height(32.dp)
+                            .widthIn(min = 100.dp, max = 150.dp)
+                    )
+                }
+                AppServer.SERVER_5 -> {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(AppServer.SERVER_5.logoUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "FreeReels Logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                }
+                AppServer.SERVER_6 -> {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(AppServer.SERVER_6.logoUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "JioSaavn Logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                }
+            }
+
+            if (activeServer != AppServer.SERVER_4) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = activeServer.title,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.5).sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
             Surface(
                 color = MovieBoxRed,
                 shape = RoundedCornerShape(4.dp)
@@ -325,30 +592,23 @@ private fun TvTopNavBar(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Surface(
-                color = Color.White.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text(
-                    text = activeServer.title,
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
         }
 
-        // Action Buttons: Search, Downloads, and to the right side of Downloads: Settings icon
+        // Action Buttons: Search, Server Switcher, Downloads, Settings
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TvNavButton(
                 icon = Icons.Default.Search,
                 label = "Search",
-                onClick = onOpenSearch
+                onClick = onOpenSearch,
+                focusRequester = firstFocusRequester
+            )
+            TvNavButton(
+                icon = Icons.Default.Dns,
+                label = activeServer.title,
+                onClick = onOpenSettings
             )
             TvNavButton(
                 icon = Icons.Default.Download,
@@ -365,7 +625,7 @@ private fun TvTopNavBar(
 }
 
 /**
- * TV Server Chooser Dialog triggered by clicking the Settings icon next to Downloads
+ * TV Server Chooser Dialog: 3-column grid of square cards for all servers
  */
 @Composable
 private fun TvServerChooseDialog(
@@ -376,7 +636,7 @@ private fun TvServerChooseDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
-                .width(520.dp)
+                .width(660.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .border(1.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(16.dp)),
             color = DarkSurfaceVariant,
@@ -394,8 +654,8 @@ private fun TvServerChooseDialog(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
+                            imageVector = Icons.Default.Dns,
+                            contentDescription = "Server",
                             tint = MovieBoxRed,
                             modifier = Modifier.size(24.dp)
                         )
@@ -432,16 +692,32 @@ private fun TvServerChooseDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
+                // 3-column grid of all servers
+                val chunkedServers = AppServer.entries.chunked(3)
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    AppServer.entries.forEach { server ->
-                        TvServerItemRow(
-                            server = server,
-                            isSelected = server == activeServer,
-                            onClick = { onSelectServer(server) }
-                        )
+                    chunkedServers.forEach { rowServers ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            rowServers.forEach { server ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    TvServerGridCard(
+                                        server = server,
+                                        isSelected = server == activeServer,
+                                        onClick = { onSelectServer(server) }
+                                    )
+                                }
+                            }
+                            if (rowServers.size < 3) {
+                                repeat(3 - rowServers.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -450,78 +726,127 @@ private fun TvServerChooseDialog(
 }
 
 @Composable
-private fun TvServerItemRow(
+private fun TvServerGridCard(
     server: AppServer,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1.0f,
+        animationSpec = tween(120),
+        label = "server_card_scale"
+    )
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .scale(scale)
             .onFocusChanged { isFocused = it.isFocused }
             .focusable()
             .border(
-                width = if (isFocused) 2.5.dp else if (isSelected) 1.5.dp else 1.dp,
+                width = if (isFocused) 3.dp else if (isSelected) 1.5.dp else 1.dp,
                 color = if (isFocused) Color.White else if (isSelected) MovieBoxRed else Color.White.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(12.dp)
             )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        color = if (isFocused) Color.White.copy(alpha = 0.22f) else if (isSelected) MovieBoxRed.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f)
+        color = if (isFocused) Color.White.copy(alpha = 0.22f) else if (isSelected) MovieBoxRed.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = if (isSelected) MovieBoxRed else Color.White.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = when (server) {
-                            AppServer.SERVER_1 -> "S1"
-                            AppServer.SERVER_2 -> "S2"
-                            AppServer.SERVER_3 -> "S3"
-                            AppServer.SERVER_4 -> "S4"
-                            AppServer.SERVER_5 -> "S5"
-                            AppServer.SERVER_6 -> "S6"
-                        },
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = server.title,
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium
-                    )
-                    Text(
-                        text = server.description,
-                        color = if (isFocused) Color.White.copy(alpha = 0.9f) else Color(0xFFA1A1AA),
-                        fontSize = 12.sp
-                    )
+            Box(
+                modifier = Modifier.size(46.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                when (server) {
+                    AppServer.SERVER_1 -> {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_moviebox_logo),
+                            contentDescription = server.title,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                    AppServer.SERVER_2 -> {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data("https://vskit.online/logo.svg")
+                                .decoderFactory(SvgDecoder.Factory())
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = server.title,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                    AppServer.SERVER_4 -> {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(server.logoUrl)
+                                .decoderFactory(SvgDecoder.Factory())
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = server.title,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                    else -> {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(server.logoUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = server.title,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
                 }
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = server.title,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(3.dp))
+
+            Text(
+                text = server.badge,
+                color = if (isSelected) MovieBoxRed else if (isFocused) Color.White.copy(alpha = 0.9f) else Color(0xFFA1A1AA),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
             if (isSelected) {
+                Spacer(modifier = Modifier.height(6.dp))
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Selected",
                     tint = MovieBoxRed,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -532,12 +857,14 @@ private fun TvServerItemRow(
 private fun TvNavButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { isFocused = it.isFocused }
             .focusable()
             .border(
@@ -583,7 +910,7 @@ private fun TvHeroSlider(
     onBannerFocused: (HeroBanner) -> Unit,
     onPlayBanner: (HeroBanner) -> Unit,
     onDetailsClick: (HeroBanner) -> Unit,
-    firstFocusRequester: FocusRequester
+    firstFocusRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
