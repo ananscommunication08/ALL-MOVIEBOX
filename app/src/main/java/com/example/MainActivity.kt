@@ -46,6 +46,17 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
 
+        // Request POST_NOTIFICATIONS permission for Android 13+ background download alerts
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
+        if (intent?.getBooleanExtra("open_downloads", false) == true) {
+            homeViewModel.openDownloads()
+        }
+
         com.example.data.repository.WatchHistoryManager.init(applicationContext)
         com.example.data.repository.RecentSearchesManager.init(applicationContext)
 
@@ -175,6 +186,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("open_downloads", false)) {
+            homeViewModel.openDownloads()
         }
     }
 }

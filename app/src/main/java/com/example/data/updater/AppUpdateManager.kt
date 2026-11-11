@@ -58,7 +58,7 @@ object AppUpdateManager {
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
     fun getCurrentVersionName(): String {
-        return BuildConfig.VERSION_NAME.ifBlank { "1.2" }
+        return BuildConfig.VERSION_NAME.ifBlank { "1.3" }
     }
 
     /**

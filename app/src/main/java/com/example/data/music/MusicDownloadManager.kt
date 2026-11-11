@@ -174,6 +174,7 @@ class MusicDownloadManager private constructor(private val context: Context) {
 
         val targetFile = File(downloadsDir, "saavn_${song.id}_${chosenBitrate}k.m4a")
         val tempFile = File(downloadsDir, "temp_song_${song.id}.tmp")
+        com.example.data.download.DownloadForegroundService.start(context)
 
         try {
             val req = Request.Builder()

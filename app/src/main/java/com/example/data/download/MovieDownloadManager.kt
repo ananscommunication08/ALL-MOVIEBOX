@@ -157,6 +157,7 @@ class MovieDownloadManager private constructor(private val context: Context) {
             )
 
             dao.insertOrUpdate(item)
+            DownloadForegroundService.start(context)
             launchDownloadJob(item, tempFile, targetFile)
         }
     }
@@ -229,6 +230,7 @@ class MovieDownloadManager private constructor(private val context: Context) {
             )
 
             dao.insertOrUpdate(item)
+            DownloadForegroundService.start(context)
             launchMergeDownloadJob(item, sortedEps, tempFile, targetFile, firstStreamUrl)
         }
     }
@@ -292,6 +294,7 @@ class MovieDownloadManager private constructor(private val context: Context) {
                 errorMessage = null
             )
             dao.update(updated)
+            DownloadForegroundService.start(context)
 
             if (item.id.contains("_all_in_one_")) {
                 val epMatch = Regex("Ep (\\d+)-(\\d+)").find(item.title)
