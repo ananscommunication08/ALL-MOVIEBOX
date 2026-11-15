@@ -174,15 +174,18 @@ class MovieBoxRepository(private val context: Context) {
     }
 
     /**
-     * Server 5: FreeReels methods
+     * Server 5: FreeReels methods (Default Dubbed tab 514)
      */
-    suspend fun fetchFreeReelsHome(tabKey: String = "503"): Pair<List<MovieItem>, String?> {
-        return com.example.data.api.FreeReelsApiClient.fetchHomeTab(tabKey)
+    suspend fun fetchFreeReelsHome(
+        tabKey: String = "514",
+        positionIndex: String = "10003"
+    ): Pair<List<MovieItem>, String?> {
+        return com.example.data.api.FreeReelsApiClient.fetchHomeTab(tabKey, positionIndex)
     }
 
     suspend fun fetchFreeReelsFeed(
         nextCursor: String,
-        moduleKey: String = "1036"
+        moduleKey: String = com.example.data.api.FreeReelsApiClient.activeModuleKey
     ): Pair<List<MovieItem>, Pair<String?, Boolean>> {
         return com.example.data.api.FreeReelsApiClient.fetchFeed(nextCursor, moduleKey)
     }

@@ -403,7 +403,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(isFreeReelsLoading = it.freeReelsItems.isEmpty()) }
             }
             try {
-                val (items, nextCursor) = repository.fetchFreeReelsHome("503")
+                val (items, nextCursor) = repository.fetchFreeReelsHome(tabKey = "514", positionIndex = "10003")
                 _uiState.update {
                     it.copy(
                         freeReelsItems = items,

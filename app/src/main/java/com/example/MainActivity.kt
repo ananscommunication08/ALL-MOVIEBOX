@@ -30,7 +30,6 @@ import com.example.ui.splash.SplashScreen
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import okhttp3.Cache
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient

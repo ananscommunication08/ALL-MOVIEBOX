@@ -103,18 +103,25 @@ object FreeReelsApiClient {
             .header("user-agent", "okhttp/4.12.0")
     }
 
+    @Volatile
+    var activeModuleKey: String = "1063"
+        private set
+
     /**
-     * 1. Home Tab Endpoint:
-     * GET /frv2-api/homepage/v2/tab/index?tab_key=503&position_index=10000&rec_trigger=1&user_new_theater=false&is_app_coldstart=false
+     * 1. Home Tab Endpoint (Default: Dubbed tab_key=514, position_index=10003):
+     * GET /frv2-api/homepage/v2/tab/index?tab_key=514&position_index=10003&rec_trigger=1&user_new_theater=false&is_app_coldstart=false
      * Returns: Pair(List<MovieItem>, nextCursor)
      */
-    suspend fun fetchHomeTab(tabKey: String = "503"): Pair<List<MovieItem>, String?> = withContext(Dispatchers.IO) {
-        val url = "$BASE_URL/frv2-api/homepage/v2/tab/index?tab_key=$tabKey&position_index=10000&rec_trigger=1&user_new_theater=false&is_app_coldstart=false"
+    suspend fun fetchHomeTab(
+        tabKey: String = "514",
+        positionIndex: String = "10003"
+    ): Pair<List<MovieItem>, String?> = withContext(Dispatchers.IO) {
+        val url = "$BASE_URL/frv2-api/homepage/v2/tab/index?tab_key=$tabKey&position_index=$positionIndex&rec_trigger=1&user_new_theater=false&is_app_coldstart=false"
         try {
             val req = buildRequestBuilder(url).get().build()
             val resp = httpClient.newCall(req).execute()
             val body = resp.body?.string() ?: return@withContext Pair(emptyList(), null)
-            if (!resp.isSuccessful) {
+            if (!responseIsOk(resp, body)) {
                 Log.e(TAG, "fetchHomeTab failed: HTTP ${resp.code}")
                 return@withContext Pair(emptyList(), null)
             }
@@ -128,6 +135,10 @@ object FreeReelsApiClient {
             val dramaList = mutableListOf<MovieItem>()
             for (i in 0 until modules.length()) {
                 val mod = modules.optJSONObject(i) ?: continue
+                val modKey = mod.optString("module_key", "").trim()
+                if (modKey.isNotBlank()) {
+                    activeModuleKey = modKey
+                }
                 val itemsArr = mod.optJSONArray("items") ?: continue
                 for (j in 0 until itemsArr.length()) {
                     val item = itemsArr.optJSONObject(j) ?: continue
@@ -142,22 +153,27 @@ object FreeReelsApiClient {
         }
     }
 
+    private fun responseIsOk(resp: Response, body: String): Boolean {
+        return resp.isSuccessful && body.isNotBlank()
+    }
+
     /**
      * 2. Feed / Pagination Endpoint:
      * POST /frv2-api/homepage/v2/tab/feed
-     * Body: {"next": nextCursor, "module_key": "1036", "user_new_theater": false}
+     * Body: {"next": nextCursor, "module_key": "1063", "user_new_theater": false}
      * Returns: Pair(List<MovieItem>, Pair(nextCursor, hasMore))
      */
     suspend fun fetchFeed(
         nextCursor: String,
-        moduleKey: String = "1036"
+        moduleKey: String = activeModuleKey
     ): Pair<List<MovieItem>, Pair<String?, Boolean>> = withContext(Dispatchers.IO) {
         if (nextCursor.isBlank()) return@withContext Pair(emptyList(), Pair(null, false))
         val url = "$BASE_URL/frv2-api/homepage/v2/tab/feed"
         try {
+            val resolvedModuleKey = moduleKey.ifBlank { activeModuleKey.ifBlank { "1063" } }
             val jsonBody = JSONObject().apply {
                 put("next", nextCursor)
-                put("module_key", moduleKey)
+                put("module_key", resolvedModuleKey)
                 put("user_new_theater", false)
             }.toString()
 

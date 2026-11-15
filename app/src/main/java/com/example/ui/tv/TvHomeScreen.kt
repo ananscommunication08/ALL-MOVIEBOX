@@ -381,8 +381,8 @@ fun TvHomeMainFeedView(
                 // Server 5: FreeReels
                 item(key = "tv_freereels_items") {
                     val sec = CategorySection(
-                        id = "freereels_popular",
-                        title = "⭐ FreeReels Popular Dramas",
+                        id = "freereels_dubbed",
+                        title = "⭐ FreeReels Dubbed Dramas",
                         type = "shorts",
                         items = uiState.freeReelsItems,
                         isVskitSection = true
